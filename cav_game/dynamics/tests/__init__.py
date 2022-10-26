@@ -1,0 +1,1 @@
+from cav_game.dynamics.tests import test_dynamics
