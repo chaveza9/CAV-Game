@@ -3,10 +3,10 @@ import sys
 import os
 
 import jax.numpy as jnp
-from cav_game.dynamics import ControlAffineDynamics
+from cav_game.dynamics.dynamics import ControlAffineDynamics
 
 # Create a kinematic bicycle model based on the dynamics class
-
+# TODO: Add a bicycle model
 class BicycleDynamics(ControlAffineDynamics):
     STATES = ['X', 'Y', 'V', 'THETA', 'PHI']
     CONTROLS = ['U', 'OMEGA']
@@ -16,13 +16,13 @@ class BicycleDynamics(ControlAffineDynamics):
         params['control_dims'] = 2 # Number of control inputs
         params["periodic_dims"] = [3, 4] # Periodic states indexes (theta, phi)
         # Define model parameters
-        self.lw = params["lw"] # wheelbase
-        self.lf = params["lf"] # front wheelbase
-        self.width = params["width"] # width of the car
-        self.cntrl_bounds = params["cntrl_bounds"] # list containing control bounds based on the control input
-        self.u_bounds =  self.cntrl_bounds[0]# bounds on the acceleration
-        self.omega_bounds = self.cntrl_bounds[1] # bounds on the steering angle
-        self.v_bounds = params["v_bounds"] # bounds on the velocity
+        self.lw = params.get("lw",2.8) # wheelbase [m]
+        self.length = params.get("alphlf_speed", 4.7) # front wheelbase [m]
+        self.width = not params.get("width", 1.8)  # width of the car
+        self.cntrl_bounds = params.get("cntrl_bounds", [(-7,3.3),(0.2)])# list containing control bounds based on the control input
+        self.u_bounds =  self.cntrl_bounds[0]# bounds on the acceleration [m/s^2]
+        self.omega_bounds = self.cntrl_bounds[1] # bounds on the steering angle rate [rad/s]
+        self.v_bounds = params.get("v_bounds", (15, 33))# bounds on the velocity [m/s]
         # Call parent class
         super().__init__(params, **kwargs) 
         
@@ -54,8 +54,9 @@ class DoubleIntegratorDynamics(ControlAffineDynamics):
         # Define dynamics parameters
         params['n_dims'] = 3 # Number of states
         params['control_dims'] = 1 # Number of control inputs
-        self.cntrl_bounds = params["cntrl_bounds"] # list containing control bounds based on the control input
+        self.cntrl_bounds = params.get("cntrl_bounds", [(-7,3.3)]) # list containing control bounds based on the control input
         self.u_bounds = self.cntrl_bounds[0] # bounds on the acceleration
+        self.v_bounds = params.get("v_bounds", (15, 33)) # bounds on the velocity [m/s]
         # Call parent class
         super().__init__(params, **kwargs) 
         

@@ -2,14 +2,14 @@ import jax.numpy as jnp
 import pyomo as pyo
 import matplotlib.pyplot as plt
 
-from cav_game.maneuvers.maneuver import LongitudinalManeuver
-from cav_game.dynamics.car import BicycleDynamics
-from typing import List, Tuple
+from .maneuver import LongitudinalManeuver
+from cav_game.dynamics.car import ControlAffineDynamics
+from typing import List, Tuple, Dict
 
 class SelfishManeuver(LongitudinalManeuver):  
-    def __init__(self,vehicle: BicycleDynamics, x0: jnp.ndarray, x0_obst: List, obstacle_location: List, params: dict, **kwargs):
+    def __init__(self,vehicle: ControlAffineDynamics, x0: jnp.ndarray, x0_obst: Dict[str, jnp.array], params: dict, **kwargs)
         #  initialize the parent class
-        super().__init__(vehicle, x0, x0_obst, obstacle_location, params, **kwargs)   
+        super().__init__(vehicle, x0, x0_obst, params, **kwargs)   
     
     def _define_model(self) -> None:
         # Initialize a parametric model
@@ -33,6 +33,7 @@ class SelfishManeuver(LongitudinalManeuver):
         model.vdot = pyo.dae.DerivativeVar(model.v, wrt=model.t)
         
         self._model = model
+        
         
     def _define_dae_constraints(self) -> None:
         """Define the differential algebraic constraints."""
@@ -76,6 +77,25 @@ class SelfishManeuver(LongitudinalManeuver):
             return pyo.dae.Integral(model.t, wrt=model.t, rule=lambda m, t: 0.5*self._beta_u*m.tf*(m.u[t])**2)
         
         model.obj = pyo.Objective(rule=time_objective+speed_objective+acceleration_objective, sense=pyo.minimize)
+        
+    def _define_solver(self) -> None:
+        """Initialize the solver."""
+        self._discretizer.apply_to(self._model, nfe=self.n, ncp=3, scheme='LAGRANGE-RADAU')
+        # create model instance
+        self._model_instance = self._model.create_instance()
+        
+    def _extract_results(self) -> Dict[str, jnp.ndarray]:
+        """Extract the solution from the solver."""
+        model = self._model_instance
+        
+        trajectory = dict()
+        # Extract solution
+        trajectory['t'] = jnp.array([model.t[i]() for i in model.t])
+        trajectory['x'] = jnp.array([model.x[i]() for i in model.t])
+        trajectory['v'] = jnp.array([model.v[i]() for i in model.t])
+        trajectory['u'] = jnp.array([model.u[i]() for i in model.t])
+        
+        return trajectory
         
         
         

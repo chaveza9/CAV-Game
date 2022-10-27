@@ -11,7 +11,7 @@ class Dynamics(metaclass=abc.ABCMeta):
         self.n_dims = len(self.STATES) if hasattr(self, "STATES") else params["n_dims"]
         self.control_dims = len(self.CONTROLS) if hasattr(self, "CONTROLS") else params["control_dims"]
         self.disturbance_dims = params.get("disturbance_dims", 1)
-        self.dt = params["dt"]
+        self.dt = 0.1 if "dt" not in params else params["dt"]
         self.periodic_dims = self.PERIODIC_DIMS if hasattr(self, "PERIODIC_DIMS") else []
         if test:
             test_dynamics.test_dynamics(self)
@@ -75,7 +75,7 @@ class Dynamics(metaclass=abc.ABCMeta):
 
 # Create a control affine dynamics class
 class ControlAffineDynamics(Dynamics):
-    def __init__(self, params: dict, test: bool = True, **kwargs):
+    def __init__(self, params: dict, test: bool = False, **kwargs):
         super().__init__(params, test, **kwargs)
         if test:
             test_dynamics.test_control_affine_dynamics(self)

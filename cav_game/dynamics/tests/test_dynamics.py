@@ -4,7 +4,7 @@ import cav_game
 
 def test_dynamics(dyn_inst):
 
-    assert isinstance(dyn_inst, cav_game.dynamics.Dynamics)
+    assert isinstance(dyn_inst, cav_game.dynamics.dynamics.Dynamics)
     state = np.random.rand(dyn_inst.n_dims)
     control = np.random.rand(dyn_inst.control_dims)
     time = np.random.rand(1)[0]
@@ -19,7 +19,7 @@ def test_dynamics(dyn_inst):
     if len(dyn_inst.periodic_dims) > 0:
         state2 = state.copy()
         for periodic_dim in dyn_inst.periodic_dims:
-            state2[..., periodic_dim] += 2 * np.pi
+            state2.at[idx].set += 2 * np.pi
         assert np.allclose(dyn_inst(state, control, time), dyn_inst(state2, control, time))
         assert np.allclose(
             dyn_inst.step(state, control, time, scheme="fe"),
@@ -49,7 +49,7 @@ def test_dynamics(dyn_inst):
 def test_control_affine_dynamics(dyn_inst):
 
     test_dynamics(dyn_inst)
-    assert isinstance(dyn_inst, cav_game.dynamics.ControlAffineDynamics)
+    assert isinstance(dyn_inst, cav_game.dynamics.dynamics.ControlAffineDynamics)
     state = np.random.rand(dyn_inst.n_dims)
     time = np.random.rand()
     assert dyn_inst.open_loop_dynamics(state, time).shape[-1] == dyn_inst.n_dims
