@@ -19,8 +19,10 @@ class BicycleDynamics(ControlAffineDynamics):
         self.lw = params["lw"] # wheelbase
         self.lf = params["lf"] # front wheelbase
         self.width = params["width"] # width of the car
-        self.u_bounds = params["u_bounds"] # bounds on the acceleration
-        self.omega_bounds = params["omega_bounds"] # bounds on the steering angle
+        self.cntrl_bounds = params["cntrl_bounds"] # list containing control bounds based on the control input
+        self.u_bounds =  self.cntrl_bounds[0]# bounds on the acceleration
+        self.omega_bounds = self.cntrl_bounds[1] # bounds on the steering angle
+        self.v_bounds = params["v_bounds"] # bounds on the velocity
         # Call parent class
         super().__init__(params, **kwargs) 
         
@@ -52,7 +54,8 @@ class DoubleIntegratorDynamics(ControlAffineDynamics):
         # Define dynamics parameters
         params['n_dims'] = 3 # Number of states
         params['control_dims'] = 1 # Number of control inputs
-        self.u_bounds = params["u_bounds"] # bounds on the acceleration
+        self.cntrl_bounds = params["cntrl_bounds"] # list containing control bounds based on the control input
+        self.u_bounds = self.cntrl_bounds[0] # bounds on the acceleration
         # Call parent class
         super().__init__(params, **kwargs) 
         
