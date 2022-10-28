@@ -9,6 +9,7 @@ from warnings import warn
 import pyomo as pyo
 from pyomo.environ import *
 from pyomo.opt import SolverStatus, TerminationCondition
+import pao
 
 # Make sure that ipopt is installed
 assert (shutil.which("ipopt") or os.path.isfile("ipopt"))

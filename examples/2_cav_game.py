@@ -62,7 +62,8 @@ veh_u = BicycleDynamics(veh_params)
 long_maneuver_c = SelfishManeuver(veh_c, x0=X0_c, x0_obst=obstacles_c, params=maneuver_params)
 
 """Compute Trajectory Maneuver"""
-trajectory_c = long_maneuver_c.compute_longitudinal_trajectory(obstacle=True)
+feasible, trajectory_c = long_maneuver_c.compute_longitudinal_trajectory(obstacle=True)
+
 
 
 
@@ -71,5 +72,14 @@ trajectory_c = long_maneuver_c.compute_longitudinal_trajectory(obstacle=True)
 """Relax Maneuver"""
 # Extract previous terminal time
 tf = trajectory_c['t'][-1]
-trajectory_c = long_maneuver_c.relax_terminal_time(time=tf * 1.1, obstacle=True)
+feasible, trajectory_c = long_maneuver_c.relax_terminal_time(time=tf * 10, obstacle=True)
+
+# Extract previous terminal time
+tf = trajectory_c['t'][-1]
+# Extract terminal position
+xf = trajectory_c['x'][-1]
+
+"""Compute Trajectory Maneuver"""
+
+
 
