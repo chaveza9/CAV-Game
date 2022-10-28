@@ -5,7 +5,7 @@ import abc
 import jax.numpy as jnp
 from typing import List, Tuple, Dict
 from cav_game.dynamics.dynamics import ControlAffineDynamics
-
+from warnings import warn
 import pyomo as pyo
 from pyomo.environ import *
 from pyomo.opt import SolverStatus, TerminationCondition
@@ -30,7 +30,7 @@ class Maneuver(metaclass=abc.ABCMeta):
         # Optimization Parameters
         self.n = params.get("n", 250)  # Number of time steps
         self.display_solver_output = params.get("display_solver_output", False)  # Display solver output
-
+        self.diff_method = params.get("diff_method", "dae.collocation")  # Finite difference method
         opt_optiopns = {"acceptable_tol": 1e-8,
                         "acceptable_obj_change_tol": 1e-8,
                         "max_iter": 10000,
@@ -52,11 +52,19 @@ class Maneuver(metaclass=abc.ABCMeta):
         self._model_instance = None  # Placeholder for the model instance
         self._results = None  # Placeholder for the optimization results
 
+    # Abstract methods
+    def _define_solver(self) -> None:
+        """Initialize the solver."""
         # Initialize solver
         self._opt = SolverFactory('ipopt')
-        self._discretizer = TransformationFactory('dae.collocation')
+        self._discretizer = TransformationFactory(self.diff_method)
 
-    # Abstract methods
+        if self.diff_method == 'dae.collocation':
+            self._discretizer.apply_to(self._model, nfe=self.n, ncp=6, scheme='LAGRANGE-RADAU')
+        elif self.diff_method == 'dae.finite_difference':
+            self._discretizer.apply_to(self._model, nfe=self.n, scheme='BACKWARD')
+        else:
+            raise ValueError('Invalid discretization method.')
 
     @abc.abstractmethod
     def _define_model(self) -> None:
@@ -84,7 +92,7 @@ class Maneuver(metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def _solve(self) -> None:
+    def _solve(self) -> bool:
         """Function to solve the optimization problem"""
         pass
 
@@ -136,13 +144,13 @@ class LongitudinalManeuver(Maneuver):
         self._define_objective()
         self._define_initial_conditions()
         self._define_solver()
+        # create model instance
+        self._model_instance = self._model.create_instance()
 
     def compute_longitudinal_trajectory(self, plot: bool = True, save_path: str = "", obstacle: bool = False,
-                                        show: bool = True) -> Dict[str, jnp.ndarray]:
+                                        show: bool = True) -> Tuple[bool ,Dict[str, jnp.ndarray]]:
         """Function to compute the longitudinal trajectory of the CAV"""
-        # self._model_instance = self._model.create_instance()
-        instance = self._model_instance
-        results = self._opt.solve(instance, tee=self.display_solver_output, options=self.opt_options)
+        feasible = self._solve()
         # Solve the optimization problem
         # self._solve()
         # Extract the results
@@ -151,9 +159,9 @@ class LongitudinalManeuver(Maneuver):
         if plot:
             self._generate_trajectory_plots(save_path, obstacle, show)
 
-        return trajectory
+        return feasible, trajectory
 
-    def _extract_results(self) -> Dict[str, jnp.ndarray]:
+    def _extract_results(self) ->  Dict[str, jnp.ndarray]:
         raise NotImplementedError("Define _extract_results in subclass")
 
     def _generate_trajectory_plots(self, save_path: str = "", obstacle: bool = False, show: bool = False) -> Tuple[
@@ -176,24 +184,25 @@ class LongitudinalManeuver(Maneuver):
 
         fig = plt.figure(figsize=(10, 5))
         (ax1, ax2, ax3) = fig.subplots(3, sharex=True)
-        fig.suptitle('Trajectory ' + self.cav_type)
+        fig.suptitle('Longitudinal Trajectory ' + self.cav_type)
         # Position vs Time
         ax1.plot(tsim, xsim, label='Ego Vehicle')
         if obstacle:
             ax1.plot(tsim, xsim_obst, label='Obstacle Vehicle', color='red')
             ax1.plot(tsim, safety_distance, label='Safety Distance', color='green', linestyle='-.')
             ax1.legend()
-        ax1.grid(True)
+        ax1.grid(True, which='both')
         ax1.set_ylabel('Position [m]')
         # Velocity vs Time
         ax2.plot(tsim, vsim, label='Ego Vehicle')
-        ax2.grid(True)
+        ax2.grid(True, which='both')
         ax2.set_ylabel('Velocity [m/s]')
         # Acceleration vs Time
         ax3.plot(tsim, usim, label='Ego Vehicle')
         ax3.set_ylabel('Acceleration [m/s^2]')
-        ax3.set_ylabel('Time [s]')
-        ax3.grid(True)
+        ax3.set_xlabel('Time [s]')
+        ax3.ylimits = self.u_bounds
+        ax3.grid(True, which='both')
 
         if save_path:
             fig.savefig(save_path)
@@ -204,15 +213,19 @@ class LongitudinalManeuver(Maneuver):
 
         return (fig, [ax1, ax2, ax3])
 
-    def _solve(self) -> None:
+    def _solve(self) -> bool:
         """Function to solve the optimization problem"""
         # Solve the optimization problem
-        results = self._opt.solve(self._model_instance, tee=True, options = self.opt_options)
+        results = self._opt.solve(self._model_instance, tee=self.display_solver_output, options = self.opt_options)
         # Check the results status       
         if not ((results.solver.status == SolverStatus.ok) and (
                 results.solver.termination_condition == TerminationCondition.optimal)):
-            raise ValueError("Optimal solution not found", results.solver.status)
+            warn("Optimal solution not found", results.solver.status)
+            feasible = False
         else:
             print("Optimal solution found")
+            feasible = True
 
         self._results = results
+
+        return feasible
