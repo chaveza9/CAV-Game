@@ -34,6 +34,19 @@ class SelfishManeuver(LongitudinalManeuver):
         model.v_dot = pyo.dae.DerivativeVar(model.v, wrt=model.t)
         
         self._model = model
+
+
+    def relax_terminal_time(self, time, plot: bool = True, save_path: str = "",
+                                               obstacle: bool = False,  show: bool = True) -> Dict[str, jnp.ndarray]:
+        """Relax the terminal time constraint to an specified value."""
+        # Check if the solver has been initialized
+        if self._model_instance is None or self._model_instance.tf is None:
+            raise ValueError('Solver has not been initialized.')
+
+        self._model_instance.tf.fix(time)
+
+        # Get the solution
+        return self.compute_longitudinal_trajectory(plot, save_path, obstacle, show)
         
         
     def _define_dae_constraints(self) -> None:

@@ -29,6 +29,7 @@ class Maneuver(metaclass=abc.ABCMeta):
         ## Define Optional Parameters
         # Optimization Parameters
         self.n = params.get("n", 250)  # Number of time steps
+        self.display_solver_output = params.get("display_solver_output", False)  # Display solver output
 
         opt_optiopns = {"acceptable_tol": 1e-8,
                         "acceptable_obj_change_tol": 1e-8,
@@ -141,7 +142,7 @@ class LongitudinalManeuver(Maneuver):
         """Function to compute the longitudinal trajectory of the CAV"""
         # self._model_instance = self._model.create_instance()
         instance = self._model_instance
-        results = self._opt.solve(instance, tee=True, options=self.opt_options)
+        results = self._opt.solve(instance, tee=self.display_solver_output, options=self.opt_options)
         # Solve the optimization problem
         # self._solve()
         # Extract the results
