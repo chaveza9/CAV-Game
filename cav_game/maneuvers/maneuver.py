@@ -54,18 +54,19 @@ class Maneuver(metaclass=abc.ABCMeta):
         self._results = None  # Placeholder for the optimization results
 
     # Abstract methods
+    @abc.abstractmethod
     def _define_solver(self) -> None:
         """Initialize the solver."""
         # Initialize solver
-        self._opt = SolverFactory('ipopt')
-        self._discretizer = TransformationFactory(self.diff_method)
-
-        if self.diff_method == 'dae.collocation':
-            self._discretizer.apply_to(self._model, nfe=self.n, ncp=6, scheme='LAGRANGE-RADAU')
-        elif self.diff_method == 'dae.finite_difference':
-            self._discretizer.apply_to(self._model, nfe=self.n, scheme='BACKWARD')
-        else:
-            raise ValueError('Invalid discretization method.')
+        pass
+    @staticmethod
+    def _rk4( f, x0, u, dt):
+        """Runge-Kutta 4th order integration."""
+        k1 = f(x0, u)
+        k2 = f(x0 + 0.5 * dt * k1, u)
+        k3 = f(x0 + 0.5 * dt * k2, u)
+        k4 = f(x0 + dt * k3, u)
+        return x0 + (dt / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
 
     @abc.abstractmethod
     def _define_model(self) -> None:
@@ -152,34 +153,31 @@ class LongitudinalManeuver(Maneuver):
                                         show: bool = True) -> Tuple[bool ,Dict[str, jnp.ndarray]]:
         """Function to compute the longitudinal trajectory of the CAV"""
         feasible = self._solve()
-        # Solve the optimization problem
-        # self._solve()
         # Extract the results
         trajectory = self._extract_results()
         # Generate the plots
         if plot:
-            self._generate_trajectory_plots(save_path, obstacle, show)
+            self._generate_trajectory_plots(trajectory, save_path, obstacle, show)
 
         return feasible, trajectory
 
     def _extract_results(self) ->  Dict[str, jnp.ndarray]:
         raise NotImplementedError("Define _extract_results in subclass")
 
-    def _generate_trajectory_plots(self, save_path: str = "", obstacle: bool = False, show: bool = False) -> Tuple[
+    def _generate_trajectory_plots(self, traj: Dict, save_path: str = "", obstacle: bool = False, show: bool = False) -> Tuple[
         plt.figure, List[plt.axes]]:
         """Function to generate the plots of the trajectory and the control inputs"""
         model = self._model_instance
 
         # Extract the results
-        tsim = [t * model.tf.value for t in model.t]
-        xsim = [model.x[t]() for t in model.t]
-        vsim = [model.v[t]() for t in model.t]
-        usim = [model.u[t]() for t in model.t]
+        tsim = traj["t"]
+        xsim = traj["x"]
+        vsim = traj["v"]
+        usim = traj["u"]
 
         if obstacle:
-            xsim_obst = [model.x_obst[t]() for t in model.t]
-            safety_distance = [model.x_obst[t]() - self.min_safe_distance - self.reaction_time * model.v[t]() for t in
-                               model.t]
+            xsim_obst = traj["x_obst"]
+            safety_distance = traj["safety_distance"]
 
         # Plot the trajectory
 
@@ -217,7 +215,7 @@ class LongitudinalManeuver(Maneuver):
     def _solve(self) -> bool:
         """Function to solve the optimization problem"""
         # Solve the optimization problem
-        results = self._opt.solve(self._model_instance, tee=self.display_solver_output, options = self.opt_options)
+        results = self._opt.solve(self._model_instance, tee=self.display_solver_output)
         # Check the results status       
         if not ((results.solver.status == SolverStatus.ok) and (
                 results.solver.termination_condition == TerminationCondition.optimal)):

@@ -8,6 +8,7 @@ sys.path.append(os.path.abspath('..'))
 
 from cav_game.dynamics.car import DoubleIntegratorDynamics, BicycleDynamics
 from cav_game.maneuvers.selfish import SelfishManeuver
+from cav_game.maneuvers.game import DualGame
 
 import pyomo as pyo
 from pyomo.environ import *
@@ -40,7 +41,7 @@ X0_2 = np.array([x0_2, v0_2])
 """Initialize Vehicle Parameters"""
 # Obstacle location descriptor
 obstacles_c = {"front": X0_u, "front_left": X0_1, "rear_left": X0_2}
-obstacles_1 = {"front_right": X0_u, "rear_right": X0_c, "back": X0_2}
+obstacles_1 = {"front_right": X0_u, "rear_right": X0_c, "rear": X0_2}
 obstacles_2 = {"front_right": X0_c, "front": X0_1}
 # Construct optimization parameters
 maneuver_params = {"cav_type": "CAVC",
@@ -65,14 +66,10 @@ long_maneuver_c = SelfishManeuver(veh_c, x0=X0_c, x0_obst=obstacles_c, params=ma
 feasible, trajectory_c = long_maneuver_c.compute_longitudinal_trajectory(obstacle=True)
 
 
-
-
-
-
 """Relax Maneuver"""
 # Extract previous terminal time
 tf = trajectory_c['t'][-1]
-feasible, trajectory_c = long_maneuver_c.relax_terminal_time(time=tf * 10, obstacle=True)
+feasible, trajectory_c = long_maneuver_c.relax_terminal_time(time=tf * 2, obstacle=True)
 
 # Extract previous terminal time
 tf = trajectory_c['t'][-1]
@@ -80,6 +77,7 @@ tf = trajectory_c['t'][-1]
 xf = trajectory_c['x'][-1]
 
 """Compute Trajectory Maneuver"""
+dual_game = DualGame(veh_1, tf, xf, X0_1,obstacles_1, maneuver_params)
 
 
 
