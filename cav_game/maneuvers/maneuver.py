@@ -150,7 +150,7 @@ class LongitudinalManeuver(Maneuver):
         self._model_instance = self._model.create_instance()
 
     def compute_longitudinal_trajectory(self, plot: bool = True, save_path: str = "", obstacle: bool = False,
-                                        show: bool = True) -> Tuple[bool ,Dict[str, jnp.ndarray]]:
+                                        show: bool = True) -> Tuple[bool, Dict[str, jnp.ndarray]]:
         """Function to compute the longitudinal trajectory of the CAV"""
         feasible = self._solve()
         # Extract the results

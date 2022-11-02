@@ -79,5 +79,7 @@ xf = trajectory_c['x'][-1]
 """Compute Trajectory Maneuver"""
 dual_game = DualGame(veh_1, tf, xf, X0_1,obstacles_1, maneuver_params)
 
+feasible, trajectory_1 = dual_game.compute_longitudinal_trajectory()
+
 
 
