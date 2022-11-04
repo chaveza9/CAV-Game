@@ -186,8 +186,6 @@ class DualLagrangianGame(LongitudinalManeuver):
                            model.lagrangian_v_min + model.lagrangian_v_max + model.lagrangian_u_min + \
                            model.lagrangian_u_max
 
-    def _add_kkt_constraints(self) -> None:
-        model = self._model
         # KKT Conditions
         # Add stationary conditions
         model.kkt_stationary = pe.ConstraintList()
@@ -195,15 +193,10 @@ class DualLagrangianGame(LongitudinalManeuver):
             model.kkt_stationary.add(expr=differentiate(model.u_obst[k], wrt=model.u_obst[k]) == 0)
 
         # Add complementary slackness conditions
-        model.kkt_complementary_slackness = pe.ConstraintList()
-
-        model.kkt_position = pe.Constraint(expr=model.lagrangian_position_constraint == 0)
-        model.kkt_velocity = pe.Constraint(expr=model.lagrangian_velocity_constraint == 0)
-        model.kkt_safety = pe.Constraint(expr=model.lagrangian_safety_constraint == 0)
-        model.kkt_v_min = pe.Constraint(expr=model.lagrangian_v_min == 0)
-        model.kkt_v_max = pe.Constraint(expr=model.lagrangian_v_max == 0)
-        model.kkt_u_min = pe.Constraint(expr=model.lagrangian_u_min == 0)
-        model.kkt_u_max = pe.Constraint(expr=model.lagrangian_u_max == 0)
+        # Safety Constraint
+        model.kkt_safety = pe.ConstraintList()
+        for k in model.t:
+            model.kkt_safety.add(expr=model.mu_s[k] * safety_function(model, k) == 0)
 
     def _extract_results(self) -> Dict[str, jnp.ndarray]:
         """Extract the solution from the solver."""
