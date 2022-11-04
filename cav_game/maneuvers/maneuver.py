@@ -128,6 +128,7 @@ class LongitudinalManeuver(Maneuver):
         self.alpha_time = params.get("alpha_time", 0.1)  # Time penalty weight
         self.alpha_control = params.get("alpha_control", 0.3)  # Control penalty weight
         self.alpha_speed = params.get("alpha_speed", 0.6)  # Speed penalty weight
+        self.alpha_control = 1-self.alpha_speed-self.alpha_time
         # Check that weights add up to 1
         # assert (self.alpha_time + self.alpha_control + self.alpha_speed == 1, "Weights must add up to 1")
 
@@ -135,9 +136,11 @@ class LongitudinalManeuver(Maneuver):
         self._initial_state_obst = x0_obst  # List of initial states of the obstacle vehicles
 
         # Normalize the weights
-        self._beta_u = self.alpha_control / (jnp.max(jnp.array(self.u_bounds) ** 2))  # Acceleration cost weight
-        self._beta_t = self.alpha_time  # Minimum Time weight
-        self._beta_v = self.alpha_speed  # Desired velocity weight
+        #self._beta_u = self.alpha_control /(max(jnp.array(self.u_bounds) ** 2))  # Acceleration cost weight
+        max_u = max([(self.u_bounds[0])**2, (self.u_bounds[1])**2])
+        max_delta_v = max([(self.v_bounds[0]-self.v_des)**2, (self.v_bounds[1]-self.v_des)**2])
+        self._beta_t = self.alpha_time*max_u/self.alpha_control  # Time cost weight
+        self._beta_v = self.alpha_speed*self.t_max*max_u/(self.alpha_control*max_delta_v)  # Desired velocity weight
 
         # Define the optimization model
         self._define_model()
@@ -164,53 +167,11 @@ class LongitudinalManeuver(Maneuver):
     def _extract_results(self) ->  Dict[str, jnp.ndarray]:
         raise NotImplementedError("Define _extract_results in subclass")
 
-    def _generate_trajectory_plots(self, traj: Dict, save_path: str = "", obstacle: bool = False, show: bool = False) -> Tuple[
+    @abc.abstractmethod
+    def _generate_trajectory_plots(self, trajectory, save_path: str = "", obstacle: bool = False, show: bool = False) -> Tuple[
         plt.figure, List[plt.axes]]:
-        """Function to generate the plots of the trajectory and the control inputs"""
-        model = self._model_instance
-
-        # Extract the results
-        tsim = traj["t"]
-        xsim = traj["x"]
-        vsim = traj["v"]
-        usim = traj["u"]
-
-        if obstacle:
-            xsim_obst = traj["x_obst"]
-            safety_distance = traj["safety_distance"]
-
-        # Plot the trajectory
-
-        fig = plt.figure(figsize=(10, 5))
-        (ax1, ax2, ax3) = fig.subplots(3, sharex=True)
-        fig.suptitle('Longitudinal Trajectory ' + self.cav_type)
-        # Position vs Time
-        ax1.plot(tsim, xsim, label='Ego Vehicle')
-        if obstacle:
-            ax1.plot(tsim, xsim_obst, label='Obstacle Vehicle', color='red')
-            ax1.plot(tsim, safety_distance, label='Safety Distance', color='green', linestyle='-.')
-            ax1.legend()
-        ax1.grid(True, which='both')
-        ax1.set_ylabel('Position [m]')
-        # Velocity vs Time
-        ax2.plot(tsim, vsim, label='Ego Vehicle')
-        ax2.grid(True, which='both')
-        ax2.set_ylabel('Velocity [m/s]')
-        # Acceleration vs Time
-        ax3.plot(tsim, usim, label='Ego Vehicle')
-        ax3.set_ylabel('Acceleration [m/s^2]')
-        ax3.set_xlabel('Time [s]')
-        ax3.ylimits = self.u_bounds
-        ax3.grid(True, which='both')
-
-        if save_path:
-            fig.savefig(save_path)
-
-        if show:
-            fig.tight_layout()
-            fig.show()
-
-        return (fig, [ax1, ax2, ax3])
+        """Function to generate the trajectory plots"""
+        pass
 
     def _solve(self) -> bool:
         """Function to solve the optimization problem"""
