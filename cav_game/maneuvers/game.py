@@ -36,6 +36,7 @@ class DualLagrangianGame(LongitudinalManeuver):
         model.v = pe.Var(model.t, bounds=(self.v_bounds[0], self.v_bounds[1]))  # Velocity [m/s]
         model.u = pe.Var(model.t, bounds=(self.u_bounds[0], self.u_bounds[1]),
                          initialize=3)  # Acceleration [m/s^2]
+        model.jerk = pe.Var(model.t, bounds=(-0.8, 0.8))  # Jerk [m/s^3]
         # ------------------ Obstacle Model ------------------
         # Define sub-model parameters
         model.x0_obst = pe.Param(initialize=self._initial_state_obst['rear'][0])  # Initial position
@@ -46,6 +47,7 @@ class DualLagrangianGame(LongitudinalManeuver):
         model.v_obst = pe.Var(model.t, bounds=(self.v_bounds[0], self.v_bounds[1]))  # Velocity [m/s]
         model.u_obst = pe.Var(model.t, bounds=(self.u_bounds[0], self.u_bounds[1]),
                               initialize=3)  # Acceleration [m/s^2]
+        model.jerk_obst = pe.Var(model.t, bounds=(-0.8, 0.8))  # Jerk [m/s^3]
 
         # Define dual variables
         model.lamda_safety = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for safety constraint
@@ -55,6 +57,7 @@ class DualLagrangianGame(LongitudinalManeuver):
         model.lambda_u_min = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for acceleration constraint
         model.mu_x = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for position equality constraint
         model.mu_v = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for velocity equality constraint
+        model.mu_jerk = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for jerk equality constraint
 
         # Define Relaxation Variables
         model.epsilon = pe.Param(initialize=1)  # Relaxation variable lagrangian multiplier
@@ -82,6 +85,14 @@ class DualLagrangianGame(LongitudinalManeuver):
 
         model.ode_v = pe.Constraint(model.t, rule=ode_v)
 
+        def ode_jerk(m, k):
+            if k < self.n:
+                return m.jerk[k + 1] == m.u[k + 1] - m.u[k]
+            else:
+                return pe.Constraint.Skip
+
+        model.ode_jerk = pe.Constraint(model.t, rule=ode_jerk)
+
         # ----------------- Obstacle Model -----------------
         # Define differential algebraic equations
         def ode_x_obst(m, k):
@@ -99,6 +110,14 @@ class DualLagrangianGame(LongitudinalManeuver):
                 return pe.Constraint.Skip
 
         model.ode_v_obst = pe.Constraint(model.t, rule=ode_v_obst)
+
+        def ode_jerk_obst(m, k):
+            if k < self.n:
+                return m.jerk_obst[k + 1] == m.u_obst[k + 1] - m.u_obst[k]
+            else:
+                return pe.Constraint.Skip
+
+        model.ode_u_obst = pe.Constraint(model.t, rule=ode_jerk_obst)
 
     def _define_constraints(self) -> None:
         """Create model constraints """
@@ -161,13 +180,6 @@ class DualLagrangianGame(LongitudinalManeuver):
         discrete_position_obst = lambda m, t: m.x_obst[t - 1] + m.v_obst[t] * m.dt + 0.5 * m.u_obst[t] * m.dt ** 2 \
             if t > 0 else m.x_obst[t]
         discrete_velocity_obst = lambda m, t: m.v_obst[t - 1] + m.u_obst[t] * m.dt if t > 0 else m.v_obst[t]
-        # Lagrangian Objective
-        model.lagrangian_objective = model.obst_objective
-        # Lagrangian Equality Constraints
-        model.lagrangian_position_constraint = sum(model.mu_x[t] * (discrete_position_obst(model, t))
-                                                   for t in model.t if t > 1)
-        model.lagrangian_velocity_constraint = sum(model.mu_v[t] * (discrete_velocity_obst(model, t))
-                                                   for t in model.t if t > 1)
         # Lagrangian Inequality Constraints
         safety_function = lambda m, t: -(discrete_position(m, t) - discrete_position_obst(m, t)) + \
                                        self.reaction_time * discrete_velocity_obst(m, t) + self.min_safe_distance
@@ -179,11 +191,12 @@ class DualLagrangianGame(LongitudinalManeuver):
         # Equality terms
         position_constraint_lambda = lambda m, t: m.mu_x[t] * 0.5 * m.dt ** 2
         velocity_constraint_lambda = lambda m, t: m.mu_v[t] * m.dt
+        jerk_constraint_lambda = lambda m, t: m.mu_jerk[t] * 1/m.dt
         # Inequality terms
         velocity_lim_lambda = lambda m, t: -m.lambda_v_min[t] * m.dt + m.lambda_v_max[t] * m.dt
         acceleration_lim_lambda = lambda m, t: -m.lambda_u_min[t] * m.dt + m.lambda_u_max[t] * m.dt
         safety_lambda = lambda m, t: m.lamda_safety[t] * (0.5 * m.dt ** 2 + self.reaction_time * m.dt)
-        lagrangian_dot = lambda m, t: accel_obj_lambda(m, t) + speed_obj_lambda(m, t) + \
+        lagrangian_dot = lambda m, t: accel_obj_lambda(m, t) + speed_obj_lambda(m, t) + jerk_constraint_lambda(m, t) +\
                                       position_constraint_lambda(m, t) + velocity_constraint_lambda(m, t) + \
                                       velocity_lim_lambda(m, t) + acceleration_lim_lambda(m, t) + \
                                       safety_lambda(m, t) == 0
