@@ -128,26 +128,23 @@ class LongitudinalManeuver(Maneuver):
         self.alpha_time = params.get("alpha_time", 0.1)  # Time penalty weight
         self.alpha_control = params.get("alpha_control", 0.3)  # Control penalty weight
         self.alpha_speed = params.get("alpha_speed", 0.6)  # Speed penalty weight
-        self.alpha_control = 1-self.alpha_speed-self.alpha_time
-        # Check that weights add up to 1
-        # assert (self.alpha_time + self.alpha_control + self.alpha_speed == 1, "Weights must add up to 1")
 
         self.t_max = params.get("t_max", 15)  # Maximum time [s]
         self._initial_state_obst = x0_obst  # List of initial states of the obstacle vehicles
 
         # Normalize the weights
-        #self._beta_u = self.alpha_control /(max(jnp.array(self.u_bounds) ** 2))  # Acceleration cost weight
-        max_u = max([(self.u_bounds[0])**2, (self.u_bounds[1])**2])
-        max_delta_v = max([(self.v_bounds[0]-self.v_des)**2, (self.v_bounds[1]-self.v_des)**2])
-        self._beta_t = self.alpha_time*max_u/self.alpha_control  # Time cost weight
-        self._beta_v = self.alpha_speed*self.t_max*max_u/(self.alpha_control*max_delta_v)  # Desired velocity weight
+        max_u = max([(self.u_bounds[0]) ** 2, (self.u_bounds[1]) ** 2])
+        max_delta_v = max([(self.v_bounds[0] - self.v_des) ** 2, (self.v_bounds[1] - self.v_des) ** 2])
+        self._beta_u = self.alpha_control / max_u  # Acceleration cost weight
+        self._beta_t = self.alpha_time  # Time cost weight
+        self._beta_v = self.alpha_speed  # Desired velocity weight
 
         # Define the optimization model
         self._define_model()
+        self._define_initial_conditions()
+        self._define_objective()
         self._define_constraints()
         self._define_dae_constraints()
-        self._define_objective()
-        self._define_initial_conditions()
         self._define_solver()
         # create model instance
         self._model_instance = self._model.create_instance()
@@ -189,3 +186,9 @@ class LongitudinalManeuver(Maneuver):
         self._results = results
 
         return feasible
+
+    def _define_solver(self) -> None:
+        """Initialize the solver."""
+        # Initialize solver
+        self._opt = pao.Solver('ipopt', **self.opt_options)
+        self._discretizer = None

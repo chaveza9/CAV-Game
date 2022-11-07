@@ -118,27 +118,17 @@ class SelfishManeuver(LongitudinalManeuver):
         model.v[0].fix(model.v0)
         model.u[0].fix(0)
         model.x_obst[0].fix(model.x0_obst)
-        # model.u[0].fix(0) # Initial acceleration must be zero to avoid numerical issues and simulate beggining of the maneuver
 
     def _define_objective(self) -> None:
         """Define the objective function."""
         model = self._model
-        max_u = max([(self.u_bounds[0]) ** 2, (self.u_bounds[1]) ** 2])
-        max_delta_v = max([(self.v_bounds[0] - self.v_des) ** 2, (self.v_bounds[1] - self.v_des) ** 2])
         # Define objective function
-        # model.jerk_objective = 0 * pyo.dae.Integral(model.t, wrt=model.t,
-        #                                             rule=lambda m, t: 0.1 * (m.jerk[t]) ** 2)
-        # model.time_objective = model.tf * float(self._beta_t)
-        model.time_objective = model.tf * float(self.alpha_time)/self.t_max
-        # model.speed_objective = float(self._beta_v)*(model.v[1] - self.v_des) ** 2
-        model.speed_objective = float(self.alpha_speed) * (model.v[1] - self.v_des) ** 2/max_delta_v
+        model.time_objective = model.tf * float(self._beta_t)
+        model.speed_objective = float(self._beta_v) * (model.v[1] - self.v_des) ** 2
         model.acceleration_objective = pyo.dae.Integral(model.t, wrt=model.t,
-                                                        rule=lambda m, t: self.alpha_control*0.5*(m.u[t]) ** 2/max_u)
-        # model.obj = pe.Objective(
-        #     rule=model.time_objective + model.speed_objective + (model.acceleration_objective + model.jerk_objective),
-        #     sense=pe.minimize)
+                                                        rule=lambda m, t: 0.5 * (m.u[t]) ** 2)
         model.obj = pe.Objective(
-            rule=model.time_objective + model.speed_objective + model.acceleration_objective,
+            rule=model.time_objective + model.speed_objective + model.acceleration_objective * float(self._beta_u),
             sense=pe.minimize)
 
     def _extract_results(self) -> Dict[str, jnp.ndarray]:
@@ -251,24 +241,27 @@ class SelfishManeuverRK4(SelfishManeuver):
 
         # Define differential algebraic equations
         def ode_x(m, k):
+            f = lambda x, v: v
             if k < self.n:
-                return m.x[k + 1] == m.x[k] + m.v[k] * m.dt
+                return m.x[k + 1] == self._rk4(f, m.x[k], m.v[k], m.dt)
             else:
                 return pe.Constraint.Skip
 
         model.ode_x = pe.Constraint(model.t, rule=ode_x)
 
         def ode_v(m, k):
+            f = lambda u, v: u
             if k < self.n:
-                return m.v[k + 1] == m.v[k] + m.u[k] * m.dt
+                return m.v[k + 1] == self._rk4(f, m.v[k], m.u[k], m.dt)
             else:
                 return pe.Constraint.Skip
 
         model.ode_v = pe.Constraint(model.t, rule=ode_v)
 
         def ode_u(m, k):
+            f = lambda u, jerk: jerk
             if k < self.n:
-                return m.u[k + 1] == m.u[k] + m.jerk[k] * m.dt
+                return m.u[k + 1] == self._rk4(f, m.u[k], m.jerk[k], m.dt)
             else:
                 return pe.Constraint.Skip
 
@@ -287,9 +280,48 @@ class SelfishManeuverRK4(SelfishManeuver):
         """Define the objective function."""
         model = self._model
         # Define objective function
-        model.time_objective = model.tf * self._beta_t
+        # Define integration of jerk
+        def int_jerk(m):
+            f = lambda jerk, x: 0.5 * jerk ** 2
+            sum = 0
+            for k in m.t:
+                if k < self.n:
+                    sum += self._rk4(f, m.jerk[k], m.jerk[k + 1], m.dt)
+            return sum
+        model.jerk_objective = int_jerk(model)
+
+        # Define Acceleration Objective
+        def int_acc(m):
+            f = lambda u, x: 0.5 * u ** 2
+            sum = 0
+            for k in m.t:
+                if k < self.n:
+                    sum += float(self._beta_u)*self._rk4(f, m.u[k], m.u[k + 1], m.dt)
+            return sum
+
+        model.acceleration_objective = int_acc(model)
+        # Time Objective
+        model.time_objective = model.tf * float(self._beta_t)
+        # Terminal Speed Objective
         model.speed_objective = float(self._beta_v) * (model.v[self.n] - self.v_des) ** 2
-        model.acceleration_objective = sum(model.dt*(model.u[k]) ** 2 for k in model.t)
+        # Total Objective
         model.obj = pe.Objective(
-            rule=model.time_objective + model.speed_objective + (model.acceleration_objective),
+            rule=model.time_objective + model.speed_objective + model.acceleration_objective,
             sense=pe.minimize)
+
+    def _extract_results(self) -> Dict[str, jnp.ndarray]:
+        """Extract the solution from the solver."""
+        model = self._model_instance
+
+        trajectory = dict()
+        # Extract solution
+        trajectory['t'] = [t*model.dt() for t in model.t]
+        trajectory['x'] = [model.x[i]() for i in model.t]
+        trajectory['v'] = [model.v[i]() for i in model.t]
+        trajectory['u'] = [model.u[i]() for i in model.t]
+        trajectory['x_obst'] = [model.x_obst[i]() for i in model.t]
+        trajectory['safety_distance'] = [model.x_obst[i]() - model.v[i]() * self.reaction_time - self.reaction_time
+                                         for i in model.t]
+
+        return trajectory
+

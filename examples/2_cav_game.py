@@ -8,7 +8,7 @@ sys.path.append(os.path.abspath('..'))
 
 from cav_game.dynamics.car import DoubleIntegratorDynamics, BicycleDynamics
 from cav_game.maneuvers.selfish import SelfishManeuver
-from cav_game.maneuvers.game import DualGame
+from cav_game.maneuvers.game import DualLagrangianGame
 
 import pyomo as pyo
 from pyomo.environ import *
@@ -45,14 +45,13 @@ obstacles_1 = {"front_right": X0_u, "rear_right": X0_c, "rear": X0_2}
 obstacles_2 = {"front_right": X0_c, "front": X0_1}
 # Construct optimization parameters
 maneuver_params = {"cav_type": "CAVC",
-                   "alpha_time": 0.2,
-                   "alpha_control": 0.1,
-                   "alpha_speed": 0.7,
+                   "alpha_time":0.01,
+                   "alpha_speed":0.98,
+                   "alpha_accel":0.01,
                    "n": 300,
                    "diff_method": 'dae.finite_difference',
-                   "alpha_control": 0.1,
-                   "alpha_time": 0.05,
-                   "alpha_speed": 0.8}
+                   "display_solver_output": True}
+
 # Construct vehicle models
 veh_params = {}
 veh_c = BicycleDynamics(veh_params)
@@ -63,13 +62,13 @@ veh_u = BicycleDynamics(veh_params)
 long_maneuver_c = SelfishManeuver(veh_c, x0=X0_c, x0_obst=obstacles_c, params=maneuver_params)
 
 """Compute Trajectory Maneuver"""
-feasible, trajectory_c = long_maneuver_c.compute_longitudinal_trajectory(obstacle=True)
+feasible, trajectory_c = long_maneuver_c.compute_longitudinal_trajectory(obstacle=True, show=False)
 
 
 """Relax Maneuver"""
 # Extract previous terminal time
 tf = trajectory_c['t'][-1]
-feasible, trajectory_c = long_maneuver_c.relax_terminal_time(time=tf * 2, obstacle=True)
+feasible, trajectory_c = long_maneuver_c.relax_terminal_time(time=tf * 2, obstacle=True, show=False)
 
 # Extract previous terminal time
 tf = trajectory_c['t'][-1]
@@ -77,9 +76,9 @@ tf = trajectory_c['t'][-1]
 xf = trajectory_c['x'][-1]
 
 """Compute Trajectory Maneuver"""
-dual_game = DualGame(veh_1, tf, xf, X0_1,obstacles_1, maneuver_params)
+dual_game = DualLagrangianGame(veh_1, tf, xf, X0_1,obstacles_1, maneuver_params)
 
-feasible, trajectory_1 = dual_game.compute_longitudinal_trajectory()
+feasible, trajectory_1 = dual_game.compute_longitudinal_trajectory(obstacle=True, show=True)
 
 
 

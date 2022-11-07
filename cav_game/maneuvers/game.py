@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import numpy as np
 import pyomo as pyo
 from pyomo.core.expr import differentiate
 import pyomo.environ as pe
@@ -19,13 +20,6 @@ class DualLagrangianGame(LongitudinalManeuver):
         self.terminal_position = xf_c
         #  initialize the parent class
         super().__init__(vehicle, x0, x0_obst, params, **kwargs)
-
-    def _define_solver(self) -> None:
-        """Initialize the solver."""
-        # Initialize solver
-        nlp = self._opt = pao.Solver('ipopt', **self.opt_options)
-        self._opt = pao.Solver('pao.pyomo.REG', nlp_solver=pao.Solver('ipopt'))
-        self._discretizer = None
 
     def _define_model(self) -> None:
         # ----------------- Main Model -----------------
@@ -62,6 +56,8 @@ class DualLagrangianGame(LongitudinalManeuver):
         model.mu_x = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for position equality constraint
         model.mu_v = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for velocity equality constraint
 
+        # Define Relaxation Variables
+        model.epsilon = pe.Param(initialize=1)  # Relaxation variable lagrangian multiplier
         self._model = model
 
     def _define_dae_constraints(self) -> None:
@@ -110,12 +106,15 @@ class DualLagrangianGame(LongitudinalManeuver):
 
         # Define safety constraints
         def safety_distance(m, t):
-            return m.x[t] - m.x_obst[t] >= self.reaction_time * m.sub.v_obst[t] + self.min_safe_distance
+            return m.x[t] - m.x_obst[t] >= self.reaction_time * m.v_obst[t] + self.min_safe_distance
 
         model.safety = pe.Constraint(model.t, rule=safety_distance)
 
         # Define terminal constraints
         model.xf = pe.Constraint(expr=model.x[self.n] >= self.terminal_position + 15.0)
+
+        # Add Lagrangian constraints
+        self._define_lagrangian()
 
     def _define_initial_conditions(self) -> None:
         """Define the initial conditions."""
@@ -138,18 +137,17 @@ class DualLagrangianGame(LongitudinalManeuver):
         model.speed_objective = sum(float(self._beta_v) * (model.v[t] - self.v_des) ** 2 for t in model.t)
         model.acceleration_objective = sum(model.dt * float(self._beta_u) * (model.u[t]) ** 2 for t in model.t)
         # Influence Objective
-        model.opponent_objective_pos = sum(model.dt * (model.x_obst[t] - self.terminal_position -
-                                                       model.v_obst[
-                                                           t] * self.reaction_time - self.min_safe_distance) ** 2
-                                           for t in model.t)
-        model.opponent_objective_vel = sum(model.dt * (model.v_obst[t] - self.v_des) ** 2 for t in model.t)
+        model.influence_objective_pos = sum(model.dt * -(self.terminal_position - 15 - model.x_obst[t]) ** 2
+                                            for t in model.t)
+        model.influence_objective_vel = sum(
+            model.dt * float(self._beta_v) * (model.v_obst[t] - self.v_des) ** 2 for t in model.t)
         # Define objective function ego vehicle expression
         model.ego_objective = model.speed_objective + model.acceleration_objective + \
-                              model.opponent_objective_pos + model.opponent_objective_vel
+                              model.influence_objective_pos + model.influence_objective_vel
 
         # ----------------- Obstacle Model -----------------
         # Define objective function expressions
-        model.speed_objective_obst = sum(self._beta_v * (model.v_obst[t] - self.v_des) ** 2 for t in model.t)
+        model.speed_objective_obst = sum(float(self._beta_v) * (model.v_obst[t] - self.v_des) ** 2 for t in model.t)
         model.acceleration_objective_obst = sum(model.dt * float(self._beta_u) * (model.u_obst[t]) ** 2
                                                 for t in model.t)
         # Define objective function ego vehicle expression
@@ -159,9 +157,10 @@ class DualLagrangianGame(LongitudinalManeuver):
 
     def _define_lagrangian(self) -> None:
         model = self._model
-        discrete_position = lambda m, t: m.x[t - 1] + m.v[t] * m.dt + 0.5 * m.u[t] * m.dt ** 2
-        discrete_position_obst = lambda m, t: m.x_obst[t - 1] + m.v_obst[t] * m.dt + 0.5 * m.u_obst[t] * m.dt ** 2
-        discrete_velocity_obst = lambda m, t: m.v_obst[t - 1] + m.u_obst[t] * m.dt
+        discrete_position = lambda m, t: m.x[t - 1] + m.v[t] * m.dt + 0.5 * m.u[t] * m.dt ** 2 if t > 0 else m.x[t]
+        discrete_position_obst = lambda m, t: m.x_obst[t - 1] + m.v_obst[t] * m.dt + 0.5 * m.u_obst[t] * m.dt ** 2 \
+            if t > 0 else m.x_obst[t]
+        discrete_velocity_obst = lambda m, t: m.v_obst[t - 1] + m.u_obst[t] * m.dt if t > 0 else m.v_obst[t]
         # Lagrangian Objective
         model.lagrangian_objective = model.obst_objective
         # Lagrangian Equality Constraints
@@ -172,31 +171,51 @@ class DualLagrangianGame(LongitudinalManeuver):
         # Lagrangian Inequality Constraints
         safety_function = lambda m, t: -(discrete_position(m, t) - discrete_position_obst(m, t)) + \
                                        self.reaction_time * discrete_velocity_obst(m, t) + self.min_safe_distance
-        model.lagrangian_safety_constraint = sum(model.mu_s[t] * safety_function(model, t) for t in model.t)
-        # Lagrangian's actuation constraints
-        model.lagrangian_v_min = sum(model.mu_v_min[t] * (-discrete_velocity_obst(model, t) + self.v_bounds[0])
-                                     for t in model.t)
-        model.lagrangian_v_max = sum(model.mu_v_max[t] * (discrete_velocity_obst(model, t) - self.v_bounds[1])
-                                     for t in model.t)
-        model.lagrangian_u_min = sum(model.mu_u_min[t] * (-model.u_obst + self.u_bounds[0]) for t in model.t)
-        model.lagrangian_u_max = sum(model.mu_u_max[t] * (model.u_obst - self.u_bounds[1]) for t in model.t)
-        # Add lagrangian terms
-        model.lagrangian = model.lagrangian_objective + model.lagrangian_position_constraint + \
-                           model.lagrangian_velocity_constraint + model.lagrangian_safety_constraint + \
-                           model.lagrangian_v_min + model.lagrangian_v_max + model.lagrangian_u_min + \
-                           model.lagrangian_u_max
 
         # KKT Conditions
-        # Add stationary conditions
-        model.kkt_stationary = pe.ConstraintList()
-        for k in model.t:
-            model.kkt_stationary.add(expr=differentiate(model.u_obst[k], wrt=model.u_obst[k]) == 0)
+        # Objective terms
+        accel_obj_lambda = lambda m, t: m.u_obst[t] * m.dt
+        speed_obj_lambda = lambda m, t: (m.v_obst[t - 1] - self.v_des) * m.dt + m.dt ** 2 if t > 0 else 0
+        # Equality terms
+        position_constraint_lambda = lambda m, t: m.mu_x[t] * 0.5 * m.dt ** 2
+        velocity_constraint_lambda = lambda m, t: m.mu_v[t] * m.dt
+        # Inequality terms
+        velocity_lim_lambda = lambda m, t: -m.lambda_v_min[t] * m.dt + m.lambda_v_max[t] * m.dt
+        acceleration_lim_lambda = lambda m, t: -m.lambda_u_min[t] * m.dt + m.lambda_u_max[t] * m.dt
+        safety_lambda = lambda m, t: m.lamda_safety[t] * (0.5 * m.dt ** 2 + self.reaction_time * m.dt)
+        lagrangian_dot = lambda m, t: accel_obj_lambda(m, t) + speed_obj_lambda(m, t) + \
+                                      position_constraint_lambda(m, t) + velocity_constraint_lambda(m, t) + \
+                                      velocity_lim_lambda(m, t) + acceleration_lim_lambda(m, t) + \
+                                      safety_lambda(m, t) == 0
 
+        model.kkt_stationary = pe.Constraint(model.t, rule=lagrangian_dot)
         # Add complementary slackness conditions
         # Safety Constraint
         model.kkt_safety = pe.ConstraintList()
         for k in model.t:
-            model.kkt_safety.add(expr=model.mu_s[k] * safety_function(model, k) == 0)
+            model.kkt_safety.add(expr=model.lamda_safety[k] * safety_function(model, k) >= -model.epsilon)
+
+        # Velocity Bounds
+        model.kkt_v_min = pe.ConstraintList()
+        for k in model.t:
+            model.kkt_v_min.add(expr=model.lambda_v_min[k] * (-discrete_velocity_obst(model, k) + self.v_bounds[0])
+                                     >= -model.epsilon)
+
+        model.kkt_v_max = pe.ConstraintList()
+        for k in model.t:
+            model.kkt_v_max.add(expr=model.lambda_v_max[k] * (discrete_velocity_obst(model, k) - self.v_bounds[1])
+                                     >= -model.epsilon)
+
+        # Actuation Bounds
+        model.kkt_u_min = pe.ConstraintList()
+        for k in model.t:
+            model.kkt_u_min.add(expr=model.lambda_u_min[k] * (-model.u_obst[k] + self.u_bounds[0])
+                                     >= -model.epsilon)
+
+        model.kkt_u_max = pe.ConstraintList()
+        for k in model.t:
+            model.kkt_u_max.add(expr=model.lambda_u_max[k] * (model.u_obst[k] - self.u_bounds[1])
+                                     >= -model.epsilon)
 
     def _extract_results(self) -> Dict[str, jnp.ndarray]:
         """Extract the solution from the solver."""
@@ -204,7 +223,7 @@ class DualLagrangianGame(LongitudinalManeuver):
 
         trajectory = dict()
         # Extract solution
-        trajectory['t'] = [t * model.tf for t in model.t]
+        trajectory['t'] = [t * model.dt() for t in model.t]
         # Ego Vehicle
         trajectory['x_ego'] = [model.x[i]() for i in model.t]
         trajectory['v_ego'] = [model.v[i]() for i in model.t]
@@ -216,22 +235,23 @@ class DualLagrangianGame(LongitudinalManeuver):
 
         return trajectory
 
-    def _generate_trajectory_plots(self, save_path: str = "", obstacle: bool = False, show: bool = False) \
+    def _generate_trajectory_plots(self, trajectory, save_path: str = "", obstacle: bool = False, show: bool = False) \
             -> Tuple[plt.figure, List[plt.axes]]:
         """Function to generate the plots of the trajectory and the control inputs"""
         model = self._model_instance
 
         # Extract the results
-        tsim = self.trajectory['t']
-        xsim = self.trajectory['x_ego']
-        vsim = self.trajectory['v_ego']
-        usim = self.trajectory['u_ego']
+        tsim = trajectory['t']
+        xsim = trajectory['x_ego']
+        vsim = trajectory['v_ego']
+        usim = trajectory['u_ego']
 
         if obstacle:
-            xsim_opponent = self.trajectory['x_opponent']
-            vsim_opponent = self.trajectory['v_opponent']
-            usim_opponent = self.trajectory['u_opponent']
-            safety_distance = xsim_opponent - self.reaction_time * vsim_opponent - self.min_safe_distance
+            xsim_opponent = trajectory['x_opponent']
+            vsim_opponent = trajectory['v_opponent']
+            usim_opponent = trajectory['u_opponent']
+            safety_distance = jnp.array(xsim) - \
+                              self.reaction_time * jnp.array(vsim_opponent) - self.min_safe_distance
         # Plot the trajectory
         plt.rcParams[r'text.usetex'] = True
         fig = plt.figure(figsize=(10, 5))
@@ -240,16 +260,16 @@ class DualLagrangianGame(LongitudinalManeuver):
         # Position vs Time
         ax1.plot(tsim, xsim, label='Ego Vehicle')
         ax1.grid(True, which='both')
-        ax1.set_ylabel(r'Position $displaystyle{\m\]}$')
+        ax1.set_ylabel(r'Position $[m]$')
         # Velocity vs Time
         ax2.plot(tsim, vsim, label='Ego Vehicle')
         ax2.grid(True, which='both')
-        ax2.set_ylabel(r'Velocity $displaystyle{\[\frac{m}{s}\]}$')
+        ax2.set_ylabel(r'Velocity $[m/s]$')
         # Acceleration vs Time
         ax3.plot(tsim, usim, label='Ego Vehicle')
-        ax3.set_ylabel(r'Acceleration $displaystyle{\[\frac{m}{s^2}\]}$')
-        ax3.set_xlabel('Time [s]')
-        ax3.ylimits = self.u_bounds
+        ax3.set_ylabel(r'Acceleration $ [ m/s^2 ]$')
+        ax3.set_xlabel(r'Time s')
+        ax3.set_ylim([min(usim) - 0.5, max(usim) + 0.5])
         ax3.grid(True, which='both')
 
         if obstacle:
@@ -258,6 +278,7 @@ class DualLagrangianGame(LongitudinalManeuver):
             ax1.legend()
             ax2.plot(tsim, vsim_opponent, label='Opponent Vehicle', color='red')
             ax3.plot(tsim, usim_opponent, label='Opponent Vehicle', color='red')
+            ax3.set_ylim([min(usim + usim_opponent) - 0.5, max(usim + usim_opponent) + 0.5])
 
         if save_path:
             fig.savefig(save_path)
