@@ -53,12 +53,18 @@ class DualLagrangianGame(LongitudinalManeuver):
         model.lambda_v_min = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for velocity constraint
         model.lambda_u_max = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for acceleration constraint
         model.lambda_u_min = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for acceleration constraint
-        model.mu_x = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for position equality constraint
-        model.mu_v = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for velocity equality constraint
-        model.mu_jerk = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for jerk equality constraint
+
+        if False:
+            model.mu_x = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for position equality constraint
+            model.mu_v = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for velocity equality constraint
+            model.mu_jerk = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for jerk equality constraint
+        else:
+            model.mu_x = pe.Var(model.t)  # Dual variable for position equality constraint
+            model.mu_v = pe.Var(model.t)  # Dual variable for velocity equality constraint
+            model.mu_jerk = pe.Var(model.t)  # Dual variable for jerk equality constraint
 
         # Define Relaxation Variables
-        model.epsilon = pe.Param(initialize=0.1)  # Relaxation variable lagrangian multiplier
+        # model.epsilon = pe.Param(initialize=0.1)  # Relaxation variable lagrangian multiplier
         # model.epsilon = pe.Var(domain=pe.NonNegativeReals)
         self._model = model
 
@@ -160,14 +166,14 @@ class DualLagrangianGame(LongitudinalManeuver):
         # Influence Objective
         smooth_max = lambda x, y: 0.5 * (x + y + pe.sqrt((x - y) ** 2 + 0.01))
         model.influence_objective_pos = smooth_max(-(self.terminal_position - self.min_safe_distance) +
-                                                    (model.x_obst[self.n] +
-                                                     model.v_obst[self.n] * self.reaction_time), 0) ** 2
+                                                   (model.x_obst[self.n] +
+                                                    model.v_obst[self.n] * self.reaction_time), 0) ** 2
 
         model.influence_objective_vel = sum(
             model.dt * float(self._beta_v) * (model.v_obst[t] - self.v_des) ** 2 for t in model.t)
         # Define objective function ego vehicle expression
         model.ego_objective = model.speed_objective + model.acceleration_objective + \
-                              50*model.influence_objective_pos + model.influence_objective_vel
+                              50 * model.influence_objective_pos + model.influence_objective_vel
 
         # ----------------- Obstacle Model -----------------
         # Define objective function expressions
@@ -186,13 +192,15 @@ class DualLagrangianGame(LongitudinalManeuver):
             if t > 0 else m.x_obst[t]
         discrete_velocity_obst = lambda m, t: m.v_obst[t - 1] + m.u_obst[t] * m.dt if t > 0 else m.v_obst[t]
         # Lagrangian Inequality Constraints
-        safety_function = lambda m, t: -(discrete_position(m, t) - discrete_position_obst(m, t)) + \
-                                       self.reaction_time * discrete_velocity_obst(m, t) + self.min_safe_distance
+
+        safety_function = lambda m, t: self.reaction_time * discrete_velocity_obst(m, t) + self.min_safe_distance + \
+                                       discrete_position_obst(m, t) - discrete_position(m, t)
 
         # KKT Conditions
         # Objective terms
         accel_obj_lambda = lambda m, t: m.u_obst[t] * m.dt
-        speed_obj_lambda = lambda m, t: (m.v_obst[t - 1] - self.v_des) * m.dt + m.dt ** 2 if t > 0 else 0
+        speed_obj_lambda = lambda m, t: (m.v_obst[t - 1] + m.u_obst[t] * m.dt) * m.dt - \
+                                            2 * m.dt * self.v_des if t > 0 else 0
         # Equality terms
         position_constraint_lambda = lambda m, t: m.mu_x[t] * 0.5 * m.dt ** 2
         velocity_constraint_lambda = lambda m, t: m.mu_v[t] * m.dt
@@ -202,7 +210,8 @@ class DualLagrangianGame(LongitudinalManeuver):
         acceleration_lim_lambda = lambda m, t: -m.lambda_u_min[t] * m.dt + m.lambda_u_max[t] * m.dt
         safety_lambda = lambda m, t: m.lamda_safety[t] * (0.5 * m.dt ** 2 + self.reaction_time * m.dt)
 
-        lagrangian_dot = lambda m, t: accel_obj_lambda(m, t) + speed_obj_lambda(m, t) + jerk_constraint_lambda(m, t) + \
+        lagrangian_dot = lambda m, t: self._beta_u * accel_obj_lambda(m, t) + self._beta_v * speed_obj_lambda(m, t) + \
+                                      jerk_constraint_lambda(m, t) + \
                                       position_constraint_lambda(m, t) + velocity_constraint_lambda(m, t) + \
                                       velocity_lim_lambda(m, t) + acceleration_lim_lambda(m, t) + \
                                       safety_lambda(m, t) == 0
@@ -212,29 +221,29 @@ class DualLagrangianGame(LongitudinalManeuver):
         # Safety Constraint
         model.kkt_safety = pe.ConstraintList()
         for k in model.t:
-            model.kkt_safety.add(expr=model.lamda_safety[k] * safety_function(model, k) >= -model.epsilon)
+            model.kkt_safety.add(expr=model.lamda_safety[k] * safety_function(model, k) == 0)
 
         # Velocity Bounds
         model.kkt_v_min = pe.ConstraintList()
         for k in model.t:
             model.kkt_v_min.add(expr=model.lambda_v_min[k] * (-discrete_velocity_obst(model, k) + self.v_bounds[0])
-                                     >= -model.epsilon)
+                                     == 0)
 
         model.kkt_v_max = pe.ConstraintList()
         for k in model.t:
             model.kkt_v_max.add(expr=model.lambda_v_max[k] * (discrete_velocity_obst(model, k) - self.v_bounds[1])
-                                     >= -model.epsilon)
+                                     == 0)
 
         # Actuation Bounds
         model.kkt_u_min = pe.ConstraintList()
         for k in model.t:
             model.kkt_u_min.add(expr=model.lambda_u_min[k] * (-model.u_obst[k] + self.u_bounds[0])
-                                     >= -model.epsilon)
+                                     == 0)
 
         model.kkt_u_max = pe.ConstraintList()
         for k in model.t:
             model.kkt_u_max.add(expr=model.lambda_u_max[k] * (model.u_obst[k] - self.u_bounds[1])
-                                     >= -model.epsilon)
+                                     == 0)
 
     def _extract_results(self) -> Dict[str, jnp.ndarray]:
         """Extract the solution from the solver."""

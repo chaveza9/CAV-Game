@@ -157,7 +157,7 @@ class LongitudinalManeuver(Maneuver):
         trajectory = self._extract_results()
         # Generate the plots
         if plot:
-            self._generate_trajectory_plots(trajectory, save_path, obstacle, show, kwargs)
+            self._generate_trajectory_plots(trajectory, save_path, obstacle, show, **kwargs)
 
         return feasible, trajectory
 

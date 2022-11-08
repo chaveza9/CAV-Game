@@ -48,6 +48,7 @@ maneuver_params = {"cav_type": "CAVC",
                    "alpha_time": 0.01,
                    "alpha_speed": 0.98,
                    "alpha_accel": 0.01,
+                   "v_des": 30,
                    "n": 300,
                    "diff_method": 'dae.finite_difference',
                    "display_solver_output": True}
