@@ -4,6 +4,7 @@ import numpy as np
 import shutil
 import os
 import jax.numpy as jnp
+
 sys.path.append(os.path.abspath('..'))
 
 from cav_game.dynamics.car import DoubleIntegratorDynamics, BicycleDynamics
@@ -37,7 +38,6 @@ x0_2 = 0  # Vehicle 2 initial x position [m]
 v0_2 = 29  # Vehicle 2 initial velocity [m/s]
 X0_2 = np.array([x0_2, v0_2])
 
-
 """Initialize Vehicle Parameters"""
 # Obstacle location descriptor
 obstacles_c = {"front": X0_u, "front_left": X0_1, "rear_left": X0_2}
@@ -45,9 +45,9 @@ obstacles_1 = {"front_right": X0_u, "rear_right": X0_c, "rear": X0_2}
 obstacles_2 = {"front_right": X0_c, "front": X0_1}
 # Construct optimization parameters
 maneuver_params = {"cav_type": "CAVC",
-                   "alpha_time":0.01,
-                   "alpha_speed":0.98,
-                   "alpha_accel":0.01,
+                   "alpha_time": 0.01,
+                   "alpha_speed": 0.98,
+                   "alpha_accel": 0.01,
                    "n": 300,
                    "diff_method": 'dae.finite_difference',
                    "display_solver_output": True}
@@ -64,11 +64,10 @@ long_maneuver_c = SelfishManeuver(veh_c, x0=X0_c, x0_obst=obstacles_c, params=ma
 """Compute Trajectory Maneuver"""
 feasible, trajectory_c = long_maneuver_c.compute_longitudinal_trajectory(obstacle=True, show=False)
 
-
 """Relax Maneuver"""
 # Extract previous terminal time
 tf = trajectory_c['t'][-1]
-feasible, trajectory_c = long_maneuver_c.relax_terminal_time(time=tf * 2, obstacle=True, show=False)
+feasible, trajectory_c = long_maneuver_c.relax_terminal_time(time=tf * 1.1, obstacle=True, show=False)
 
 # Extract previous terminal time
 tf = trajectory_c['t'][-1]
@@ -76,9 +75,7 @@ tf = trajectory_c['t'][-1]
 xf = trajectory_c['x'][-1]
 
 """Compute Trajectory Maneuver"""
-dual_game = DualLagrangianGame(veh_1, tf, xf, X0_1,obstacles_1, maneuver_params)
+dual_game = DualLagrangianGame(veh_1, tf, xf, X0_1, obstacles_1, maneuver_params)
 
-feasible, trajectory_1 = dual_game.compute_longitudinal_trajectory(obstacle=True, show=True)
-
-
-
+feasible, trajectory_1 = dual_game.compute_longitudinal_trajectory(obstacle=True, show=True,
+                                                                   ref_trajectory=trajectory_c, ref_name='CAV C')

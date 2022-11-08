@@ -147,9 +147,8 @@ class SelfishManeuver(LongitudinalManeuver):
 
         return trajectory
 
-    def _generate_trajectory_plots(self, trajectory, save_path: str = "", obstacle: bool = False, show: bool = False) -> \
-            Tuple[
-                plt.figure, List[plt.axes]]:
+    def _generate_trajectory_plots(self, trajectory, save_path: str = "", obstacle: bool = False, show: bool = False,
+                                   **kwargs) -> Tuple[plt.figure, List[plt.axes]]:
         """Function to generate the plots of the trajectory and the control inputs"""
         model = self._model_instance
 
@@ -158,6 +157,17 @@ class SelfishManeuver(LongitudinalManeuver):
         xsim = trajectory['x']
         vsim = trajectory['v']
         usim = trajectory['u']
+
+        # Check if reference vehicle is present
+        if kwargs.get('ref_trajectory') is not None and kwargs.get('ref_name') is not None:
+            ref_trajectory = kwargs.get('ref_trajectory')
+            ref = True
+            x_ref = ref_trajectory['x']
+            v_ref = ref_trajectory['v']
+            u_ref = ref_trajectory['u']
+            t_ref = ref_trajectory['t']
+        else:
+            ref = False
 
         if obstacle:
             xsim_obst = trajectory['x_obst']
@@ -186,9 +196,16 @@ class SelfishManeuver(LongitudinalManeuver):
         ax3.grid(True, which='both')
 
         if obstacle:
-            ax1.plot(tsim, xsim_obst, label="Obstacle Vehicle", color='red')
+            ax1.plot(tsim, xsim_obst, label="Obstacle Vehicle", color='red', linestyle='solid')
             ax1.plot(tsim, safety_distance, label="Safety Distance", color='green', linestyle='-.')
             ax1.legend(prop={'size': 6})
+
+        if ref:
+            ax1.plot(t_ref, x_ref, label=kwargs.get('ref_name'), color='orange', linestyle='solid')
+            ax2.plot(t_ref, v_ref, label=kwargs.get('ref_name'), color='orange', linestyle='solid')
+            ax3.plot(t_ref, u_ref, label=kwargs.get('ref_name'), color='orange', linestyle='solid')
+            ax3.legend(prop={'size': 6})
+
         fig.align_ylabels()
         if save_path:
             fig.savefig(save_path)

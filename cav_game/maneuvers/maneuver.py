@@ -150,14 +150,14 @@ class LongitudinalManeuver(Maneuver):
         self._model_instance = self._model.create_instance()
 
     def compute_longitudinal_trajectory(self, plot: bool = True, save_path: str = "", obstacle: bool = False,
-                                        show: bool = True) -> Tuple[bool, Dict[str, jnp.ndarray]]:
+                                        show: bool = True, **kwargs) -> Tuple[bool, Dict[str, jnp.ndarray]]:
         """Function to compute the longitudinal trajectory of the CAV"""
         feasible = self._solve()
         # Extract the results
         trajectory = self._extract_results()
         # Generate the plots
         if plot:
-            self._generate_trajectory_plots(trajectory, save_path, obstacle, show)
+            self._generate_trajectory_plots(trajectory, save_path, obstacle, show, kwargs)
 
         return feasible, trajectory
 
@@ -165,8 +165,8 @@ class LongitudinalManeuver(Maneuver):
         raise NotImplementedError("Define _extract_results in subclass")
 
     @abc.abstractmethod
-    def _generate_trajectory_plots(self, trajectory, save_path: str = "", obstacle: bool = False, show: bool = False) -> Tuple[
-        plt.figure, List[plt.axes]]:
+    def _generate_trajectory_plots(self, trajectory, save_path: str = "", obstacle: bool = False, show: bool = False,
+                                   **kwargs) -> Tuple[plt.figure, List[plt.axes]]:
         """Function to generate the trajectory plots"""
         pass
 
