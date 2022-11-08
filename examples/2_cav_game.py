@@ -9,7 +9,7 @@ sys.path.append(os.path.abspath('..'))
 
 from cav_game.dynamics.car import DoubleIntegratorDynamics, BicycleDynamics
 from cav_game.maneuvers.selfish import SelfishManeuver
-from cav_game.maneuvers.game import DualLagrangianGame
+from cav_game.maneuvers.game import SingleCAVGame
 
 import pyomo as pyo
 from pyomo.environ import *
@@ -76,7 +76,7 @@ tf = trajectory_c['t'][-1]
 xf = trajectory_c['x'][-1]
 
 """Compute Trajectory Maneuver"""
-dual_game = DualLagrangianGame(veh_1, tf, xf, X0_1, obstacles_1, maneuver_params)
+dual_game = SingleCAVGame(veh_1, tf, xf, X0_1, obstacles_1, maneuver_params)
 
 feasible, trajectory_1 = dual_game.compute_longitudinal_trajectory(obstacle=True, show=True,
                                                                    ref_trajectory=trajectory_c, ref_name='CAV C')
