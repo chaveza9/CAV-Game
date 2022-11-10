@@ -35,7 +35,8 @@ class Maneuver(metaclass=abc.ABCMeta):
         opt_optiopns = {"acceptable_tol": 1e-8,
                         "acceptable_obj_change_tol": 1e-8,
                         "max_iter": 10000,
-                        "print_level": 3}
+                        "print_level": 3,
+                        "halt_on_ampl_error": "yes"}
         self.opt_options = params.get("opt_options", opt_optiopns)  # Optimization options
 
         ## Extract vehicle parameters
@@ -139,15 +140,6 @@ class LongitudinalManeuver(Maneuver):
         self._beta_t = self.alpha_time  # Time cost weight
         self._beta_v = self.alpha_speed  # Desired velocity weight
 
-        # Define the optimization model
-        self._define_model()
-        self._define_initial_conditions()
-        self._define_objective()
-        self._define_constraints()
-        self._define_dae_constraints()
-        self._define_solver()
-        # create model instance
-        self._model_instance = self._model.create_instance()
 
     def compute_longitudinal_trajectory(self, plot: bool = True, save_path: str = "", obstacle: bool = False,
                                         show: bool = True, **kwargs) -> Tuple[bool, Dict[str, jnp.ndarray]]:
@@ -175,7 +167,7 @@ class LongitudinalManeuver(Maneuver):
         # Solve the optimization problem
         results = self._opt.solve(self._model_instance, tee=self.display_solver_output)
         # Check the results status       
-        if not ((results.solver.status == SolverStatus.ok) and (
+        if not ((results.solver.status == SolverStatus.ok) or not (
                 results.solver.termination_condition == TerminationCondition.optimal)):
             warn("Optimal solution not found", results.solver.status)
             feasible = False

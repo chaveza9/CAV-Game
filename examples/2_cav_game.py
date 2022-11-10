@@ -9,11 +9,9 @@ sys.path.append(os.path.abspath('..'))
 
 from cav_game.dynamics.car import DoubleIntegratorDynamics, BicycleDynamics
 from cav_game.maneuvers.selfish import SelfishManeuver
-from cav_game.maneuvers.game import SingleCAVGame
+from cav_game.maneuvers.following import FollowingManeuver
+from cav_game.maneuvers.game import SingleCAVGame, SingleCAVGameBarrier
 
-import pyomo as pyo
-from pyomo.environ import *
-from pyomo.opt import SolverStatus, TerminationCondition
 
 # Make sure that ipopt is installed
 assert (shutil.which("ipopt") or os.path.isfile("ipopt"))
@@ -48,8 +46,8 @@ maneuver_params = {"cav_type": "CAVC",
                    "alpha_time": 0.01,
                    "alpha_speed": 0.98,
                    "alpha_accel": 0.01,
-                   "v_des": 30,
-                   "n": 300,
+                   "v_des": 28,
+                   "n": 500,
                    "diff_method": 'dae.finite_difference',
                    "display_solver_output": True}
 
@@ -64,19 +62,26 @@ long_maneuver_c = SelfishManeuver(veh_c, x0=X0_c, x0_obst=obstacles_c, params=ma
 
 """Compute Trajectory Maneuver"""
 feasible, trajectory_c = long_maneuver_c.compute_longitudinal_trajectory(obstacle=True, show=False)
-
-"""Relax Maneuver"""
 # Extract previous terminal time
 tf = trajectory_c['t'][-1]
-feasible, trajectory_c = long_maneuver_c.relax_terminal_time(time=tf * 1.1, obstacle=True, show=False)
-
+""" Relax the problem """
+feasible, trajectory_c = long_maneuver_c.relax_terminal_time(time=tf*(1.1**7), obstacle=True)
 # Extract previous terminal time
 tf = trajectory_c['t'][-1]
 # Extract terminal position
 xf = trajectory_c['x'][-1]
 
+"""Compute Follower Maneuver"""
+maneuver_params["cav_type"] = "CAV 2"
+cav_2 = FollowingManeuver(veh_2, tf=tf, xf=xf, x0=X0_2, x0_obst=obstacles_2, params=maneuver_params)
+feasible, trajectory_2 = cav_2.compute_longitudinal_trajectory(obstacle=False, show=True,
+                                                               ref_trajectory=trajectory_c, ref_name='CAV C')
+
 """Compute Trajectory Maneuver"""
-dual_game = SingleCAVGame(veh_1, tf, xf, X0_1, obstacles_1, maneuver_params)
+maneuver_params["cav_type"] = "CAV 1"
+dual_game = SingleCAVGame(veh_1, tf, xf,  X0_1, obstacles_1, maneuver_params)
 
 feasible, trajectory_1 = dual_game.compute_longitudinal_trajectory(obstacle=True, show=True,
                                                                    ref_trajectory=trajectory_c, ref_name='CAV C')
+
+

@@ -20,6 +20,14 @@ class SelfishManeuver(LongitudinalManeuver):
                  **kwargs):
         #  initialize the parent class
         super().__init__(vehicle, x0, x0_obst, params, **kwargs)
+        self._define_model()
+        self._define_initial_conditions()
+        self._define_objective()
+        self._define_constraints()
+        self._define_dae_constraints()
+        self._define_solver()
+        # create model instance
+        self._model_instance = self._model.create_instance()
 
     def _define_solver(self) -> None:
         """Initialize the solver."""

@@ -11,7 +11,7 @@ from typing import List, Tuple, Dict
 from warnings import warn
 
 
-class SingleCAVGame(LongitudinalManeuver):
+class CBFGame(LongitudinalManeuver):
     def __init__(self, vehicle: ControlAffineDynamics, time: float, xf_c: float,
                  x0: jnp.ndarray, x0_obst: Dict[str, jnp.array], params: dict,
                  **kwargs):
@@ -40,6 +40,7 @@ class SingleCAVGame(LongitudinalManeuver):
         self._define_initial_conditions()
         self._define_objective()
         self._define_constraints()
+        self._define_lagrangian()
         self._define_dae_constraints()
         self._define_solver()
         # create model instance
@@ -110,8 +111,10 @@ class SingleCAVGame(LongitudinalManeuver):
                             initialize=0)  # Dual variable for velocity equality constraint
         model.mu_jerk = pe.Var(model.t, bounds=(0, None),
                                initialize=0)  # Dual variable for jerk equality constraint
-        # model.epsilon = pe.Var(bounds=(0, 2), initialize=0.001)  # Slack variable for barrier function
-        model.epsilon = pe.Param(initialize=0.001, mutable=True)  # Slack variable for barrier function
+        model.epsilon = pe.Param(initialize=0.5, mutable=True)  # Relaxation parameter for Lyapunov Constraint
+        model.lamb = pe.Param(initialize=3, mutable=True)  # Relaxation parameter for Lyapunov Constraint
+        model.e = pe.Var(model.t, bounds=(None, None)) # Slack variable for QP
+
         self._model = model
 
     def _define_objective(self) -> None:
@@ -138,20 +141,17 @@ class SingleCAVGame(LongitudinalManeuver):
                                                                  m.v_obst[t] - self.v_des) ** 2)
         # Define objective function ego vehicle expression
         model.ego_objective = model.speed_objective + model.acceleration_objective + model.terminal_speed +\
-                              0*model.influence_objective_pos + model.influence_objective_vel
+                              model.influence_objective_vel
 
         # ----------------- Obstacle Model -----------------
         # Define objective function expressions
         model.speed_objective_obst = pyo.dae.Integral(model.t, wrt=model.t,
                                                       rule=lambda m, t: 0.5 * float(self._beta_v_obst) * (
                                                               m.v_obst[t] - self.v_des) ** 2)
-        model.terminal_speed_obst = float(self._beta_v_obst) * self.terminal_time * \
-                                    (model.v_obst[self.terminal_time] - self.v_des) ** 2
-        model.acceleration_objective_obst = pyo.dae.Integral(model.t, wrt=model.t,
-                                                             rule=lambda m, t: 0.5 * float(self._beta_u_obst) * (
-                                                                 m.u_obst[t]) ** 2)
+        model.obst_cbf_objective = pyo.dae.Integral(model.t, wrt=model.t, rule=lambda m, t: 0.5 * m.u_obst[t] ** 2 +
+                                                                                            m.lamb * m.e[t] ** 2)
         # Define objective function ego vehicle expression
-        model.obst_objective = model.speed_objective_obst + model.acceleration_objective_obst + model.terminal_speed_obst
+        model.obst_objective = model.speed_objective_obst + model.obst_cbf_objective
 
         model.obj = pe.Objective(rule=self.ego_payout * model.ego_objective + self.obs_payout * model.obst_objective,
                                  sense=pe.minimize)
@@ -200,7 +200,7 @@ class SingleCAVGame(LongitudinalManeuver):
 
         # Define safety constraints
         def safety_distance(m, t):
-            return m.x[t] - m.x_obst[t] >= self.reaction_time*1.5* m.v_obst[t] + self.min_safe_distance
+            return m.x[t] - m.x_obst[t] >= self.reaction_time * m.v_obst[t] + self.min_safe_distance
 
         model.safety = pe.Constraint(model.t, rule=safety_distance)
 
@@ -209,9 +209,10 @@ class SingleCAVGame(LongitudinalManeuver):
 
         model.xf_obst = pe.Constraint(expr=model.x_obst[self.terminal_time] <= self.terminal_position - 15.0)
 
+        # Define CBF constraint
+        def cbf_safety(m, t):
+            return m.v[t] - m.v_obst[t] - float(self.reaction_time)
 
-        # Add Lagrangian constraints
-        self._define_lagrangian()
 
     def _define_initial_conditions(self) -> None:
         """Define the initial conditions."""
@@ -237,7 +238,7 @@ class SingleCAVGame(LongitudinalManeuver):
             if t < self.terminal_time else pe.Constraint.Skip
         vel_obst = lambda m, t: m.v_obst[t] + m.u_obst[t] * m.dt if t < self.terminal_time else pe.Constraint.Skip
         # Inequality constraints
-        safety_func = lambda m, t: float(self.reaction_time*1.5) * vel_obst(m, t) + \
+        safety_func = lambda m, t: float(self.reaction_time) * vel_obst(m, t) + \
                                    float(self.min_safe_distance) + pos_obst(m, t) - pos_ego(m, t) \
             if t < self.terminal_time else pe.Constraint.Skip
 
@@ -252,7 +253,7 @@ class SingleCAVGame(LongitudinalManeuver):
         # Inequality terms
         vel_lim_dot = lambda m, t: -m.lambda_v_min[t] * m.dt + m.lambda_v_max[t] * m.dt
         acc_lim_dot = lambda m, t: -m.lambda_u_min[t] * m.dt + m.lambda_u_max[t] * m.dt
-        safety_cons_dot = lambda m, t: m.lamda_safety[t] * (0.5 * m.dt ** 2 + self.reaction_time*1.5 * m.dt)
+        safety_cons_dot = lambda m, t: m.lamda_safety[t] * (0.5 * m.dt ** 2 + self.reaction_time * m.dt)
 
         # Define the Lagrangian gradient constraint (Stationary conditions)
         lagrangian_dot = lambda m, t: self._beta_u_obst * acc_obj_dot(m, t) + self._beta_v_obst * vel_obj_dot(m, t) + \
@@ -369,100 +370,3 @@ class SingleCAVGame(LongitudinalManeuver):
 
         return fig, [ax1, ax2, ax3]
 
-
-class SingleCAVGameBarrier(SingleCAVGame):
-    def __init__(self, vehicle: ControlAffineDynamics, time: float, xf_c: float,
-                 x0: jnp.ndarray, x0_obst: Dict[str, jnp.array], params: dict,
-                 **kwargs):
-        #  initialize the parent class
-        super().__init__(vehicle, time, xf_c, x0, x0_obst, params, **kwargs)
-
-    def _define_model(self) -> None:
-        super()._define_model()
-        model = self._model
-        # Define slack variable
-        model.slack_v_min = pe.Var(model.t, bounds=(0, None), initialize=0.1)
-        model.slack_v_max = pe.Var(model.t, bounds=(0, None), initialize=0.1)
-        model.slack_u_min = pe.Var(model.t, bounds=(0, None), initialize=0.1)
-        model.slack_u_max = pe.Var(model.t, bounds=(0, None), initialize=0.1)
-        model.slack_safety = pe.Var(model.t, bounds=(0, None), initialize=0.1)
-        model.epsilon = pe.Param(initialize=0.01, mutable=True)
-
-    def _define_constraints(self) -> None:
-        """Create model constraints """
-        model = self._model
-
-        # Define safety constraints
-        def safety_distance(m, t):
-            return m.x_obst[t] + self.reaction_time * m.v_obst[t] + self.min_safe_distance - m.x[t] + \
-                   m.slack_safety[t] == 0
-
-        model.safety = pe.Constraint(model.t, rule=safety_distance)
-
-        model.v_obst_min = pe.Constraint(model.t,
-                                         rule=lambda m, t: m.slack_v_min[t] + self.v_bounds[0] - m.v_obst[t] == 0)
-        model.v_obst_max = pe.Constraint(model.t,
-                                         rule=lambda m, t: m.slack_v_max[t] + m.v_obst[t] - self.v_bounds[1] == 0)
-        model.u_obst_min = pe.Constraint(model.t,
-                                         rule=lambda m, t: m.slack_u_min[t] + self.u_bounds[0] - m.u_obst[t] == 0)
-        model.u_obst_max = pe.Constraint(model.t,
-                                         rule=lambda m, t: m.slack_u_max[t] + m.u_obst[t] - self.u_bounds[1] == 0)
-
-        # Define terminal constraints
-        model.xf = pe.Constraint(expr=model.x[self.terminal_time] >= self.terminal_position + 15.0)
-
-        # Add Lagrangian constraints
-        self._define_lagrangian()
-
-    def _define_lagrangian(self) -> None:
-        model = self._model
-        # Constraints for the Lagrangian
-        # Equality constraints
-        pos_ego = lambda m, t: m.x[t] + m.v[t] * m.dt + 0.5 * m.u[t] * m.dt ** 2 \
-            if t < self.terminal_time else pe.Constraint.Skip
-        pos_obst = lambda m, t: m.x_obst[t] + m.v_obst[t] * m.dt + 0.5 * m.u_obst[t] * m.dt ** 2 \
-            if t < self.terminal_time else pe.Constraint.Skip
-        vel_obst = lambda m, t: m.v_obst[t] + m.u_obst[t] * m.dt if t < self.terminal_time else pe.Constraint.Skip
-        # Inequality constraints
-        safety_func = lambda m, t: float(self.reaction_time) * vel_obst(m, t) + \
-                                   float(self.min_safe_distance) + pos_obst(m, t) - pos_ego(m, t) \
-            if t < self.terminal_time else pe.Constraint.Skip
-
-        # KKT Conditions
-        # Objective terms
-        acc_obj_dot = lambda m, t: m.u_obst[t] * m.dt
-        vel_obj_dot = lambda m, t: (m.v_obst[t] + m.u_obst[t] * m.dt) * m.dt - 2 * m.dt * self.v_des
-        # Equality terms
-        pos_eq_dot = lambda m, t: m.mu_x[t] * 0.5 * m.dt ** 2
-        vel_eq_dot = lambda m, t: m.mu_v[t] * m.dt
-        jerk_eq_dot = lambda m, t: m.mu_jerk[t] * 1 / m.dt
-        # Inequality terms
-        vel_lim_dot = lambda m, t: -m.lambda_v_min[t] * m.dt + m.lambda_v_max[t] * m.dt
-        acc_lim_dot = lambda m, t: -m.lambda_u_min[t] * m.dt + m.lambda_u_max[t] * m.dt
-        safety_cons_dot = lambda m, t: m.lamda_safety[t] * (0.5 * m.dt ** 2 + self.reaction_time * m.dt)
-
-        # Define the Lagrangian gradient constraint (Stationarity conditions)
-        lagrangian_dot = lambda m, t: self._beta_u_obst * acc_obj_dot(m, t) + self._beta_v_obst * vel_obj_dot(m, t) + \
-                                      jerk_eq_dot(m, t) + \
-                                      pos_eq_dot(m, t) + vel_eq_dot(m, t) + \
-                                      vel_lim_dot(m, t) + acc_lim_dot(m, t) + \
-                                      safety_cons_dot(m, t) == 0
-
-        model.kkt_stationary = pe.Constraint(model.t, rule=lagrangian_dot)
-        # Add complementary slackness conditions with barrier function
-        # Safety Constraint
-        kkt_safety = lambda m, t: -m.epsilon / m.slack_safety[t] + m.lamda_safety[t] == 0
-        model.kkt_safety = pe.Constraint(model.t, rule=kkt_safety)
-        # Velocity Bounds
-        kkt_v_min = lambda m, t: -m.epsilon / m.slack_v_min[t] + m.lambda_v_min[t] == 0
-        model.kkt_v_min = pe.Constraint(model.t, rule=kkt_v_min)
-
-        kkt_v_max = lambda m, t: -m.epsilon / m.slack_v_max[t] + m.lambda_v_max[t] == 0
-        model.kkt_v_max = pe.Constraint(model.t, rule=kkt_v_max)
-
-        # Actuation Bounds
-        kkt_u_min = lambda m, t: -m.epsilon / m.slack_u_min[t] + m.lambda_u_min[t] == 0
-        model.kkt_u_min = pe.Constraint(model.t, rule=kkt_u_min)
-
-        kkt_u_max = lambda m, t: -m.epsilon / m.slack_u_max[t] + m.lambda_u_max[t] == 0
-        model.kkt_u_max = pe.Constraint(model.t, rule=kkt_u_max)
