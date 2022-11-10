@@ -104,6 +104,7 @@ class CBFGame(LongitudinalManeuver):
                                     domain=pe.NonNegativeReals)  # Dual variable for acceleration constraint
         model.lambda_u_min = pe.Var(model.t,
                                     domain=pe.NonNegativeReals)  # Dual variable for acceleration constraint
+        model.lambda_v_des = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for velocity constraint
 
         model.mu_x = pe.Var(model.t, bounds=(0, None),
                             initialize=0)  # Dual variable for position equality constraint
@@ -111,9 +112,11 @@ class CBFGame(LongitudinalManeuver):
                             initialize=0)  # Dual variable for velocity equality constraint
         model.mu_jerk = pe.Var(model.t, bounds=(0, None),
                                initialize=0)  # Dual variable for jerk equality constraint
+        # Lyapunov Barrier Function Constraint
         model.epsilon = pe.Param(initialize=0.5, mutable=True)  # Relaxation parameter for Lyapunov Constraint
+        model.gamma = pe.Param(initialize=1, mutable=True)  # Linear Class K Function Constant
         model.lamb = pe.Param(initialize=3, mutable=True)  # Relaxation parameter for Lyapunov Constraint
-        model.e = pe.Var(model.t, bounds=(None, None)) # Slack variable for QP
+        model.e = pe.Var(model.t, bounds=(None, None))  # Slack variable for QP
 
         self._model = model
 
@@ -127,7 +130,8 @@ class CBFGame(LongitudinalManeuver):
                                                          m.v[t] - self.v_des) ** 2)
         model.acceleration_objective = pyo.dae.Integral(model.t, wrt=model.t,
                                                         rule=lambda m, t: 0.5 * float(self._beta_u) * (m.u[t]) ** 2)
-        model.terminal_speed = float(self._beta_v) * self.terminal_time * (model.v[self.terminal_time] - self.v_des) ** 2
+        model.terminal_speed = float(self._beta_v) * self.terminal_time * (
+                model.v[self.terminal_time] - self.v_des) ** 2
         # Influence Objective
         smooth_max = lambda x, y: 0.5 * (x + y + pe.sqrt((x - y) ** 2 + 0.01))
         model.influence_objective_pos = self._beta_x * smooth_max(-(self.terminal_position - self.min_safe_distance) +
@@ -140,7 +144,7 @@ class CBFGame(LongitudinalManeuver):
                                                          rule=lambda m, t: 0.5 * float(self._beta_v) * (
                                                                  m.v_obst[t] - self.v_des) ** 2)
         # Define objective function ego vehicle expression
-        model.ego_objective = model.speed_objective + model.acceleration_objective + model.terminal_speed +\
+        model.ego_objective = model.speed_objective + model.acceleration_objective + model.terminal_speed + \
                               model.influence_objective_vel
 
         # ----------------- Obstacle Model -----------------
@@ -211,8 +215,25 @@ class CBFGame(LongitudinalManeuver):
 
         # Define CBF constraint
         def cbf_safety(m, t):
-            return m.v[t] - m.v_obst[t] - float(self.reaction_time)
+            return m.v[t] - m.v_obst[t] - float(self.reaction_time) * m.u_obst[t] + \
+                   m.alpha * (m.x[t] - self.reaction_time * m.v_obst[t] - self.min_safe_distance) >= 0
 
+        def cbf_v_max(m, t):
+            return -m.u_obst[t] + m.alpha * (self.v_bounds[1] - m.v_obst[t]) >= 0
+
+        def cbf_v_min(m, t):
+            return m.u_obst[t] + m.alpha * (m.v_obst[t] - self.v_bounds[0]) >= 0
+
+        model.cbf_constraints = pe.ConstraintList()
+        model.cbf_constraints.add(model.t, rule=cbf_safety)
+        model.cbf_constraints.add(model.t, rule=cbf_v_max)
+        model.cbf_constraints.add(model.t, rule=cbf_v_min)
+
+        # Define Lyapunov constraint
+        def clf_v_des(m, t):
+            return 2 * (m.v_obst[t] - self.v_des) * m.u_obst[t] + m.epsilon * (m.v_obst[t] - self.v_des) ** 2 <= m.e[t]
+
+        model.clf_constraint = pe.Constraint(model.t, rule=clf_v_des)
 
     def _define_initial_conditions(self) -> None:
         """Define the initial conditions."""
@@ -231,50 +252,49 @@ class CBFGame(LongitudinalManeuver):
     def _define_lagrangian(self) -> None:
         model = self._model
         # Constraints for the Lagrangian
-        # Equality constraints
-        pos_ego = lambda m, t: m.x[t] + m.v[t] * m.dt + 0.5 * m.u[t] * m.dt ** 2 \
-            if t < self.terminal_time else pe.Constraint.Skip
-        pos_obst = lambda m, t: m.x_obst[t] + m.v_obst[t] * m.dt + 0.5 * m.u_obst[t] * m.dt ** 2 \
-            if t < self.terminal_time else pe.Constraint.Skip
-        vel_obst = lambda m, t: m.v_obst[t] + m.u_obst[t] * m.dt if t < self.terminal_time else pe.Constraint.Skip
         # Inequality constraints
-        safety_func = lambda m, t: float(self.reaction_time) * vel_obst(m, t) + \
-                                   float(self.min_safe_distance) + pos_obst(m, t) - pos_ego(m, t) \
-            if t < self.terminal_time else pe.Constraint.Skip
+        cbf_safety = lambda m, t: -(m.v[t] - m.v_obst[t] - self.reaction_time*m.u_obst[t] +
+                                    m.alpha*(m.x[t] - self.reaction_time*m.v_obst[t] - self.min_safe_distance))
+        cbf_v_max = lambda m, t: m.u_obst[t] - m.alpha*(self.v_bounds[1] - m.v_obst[t])
+        cbf_v_min = lambda m, t: -m.u_obst[t] - m.alpha*(m.v_obst[t] - self.v_bounds[0])
+        clf_v_des = lambda m, t: 2*(m.v_obst[t] - self.v_des)*m.u_obst[t] + \
+                                 m.epsilon*(m.v_obst[t] - self.v_des)**2 - m.e[t]
 
         # KKT Conditions
         # Objective terms
         acc_obj_dot = lambda m, t: m.u_obst[t] * m.dt
-        vel_obj_dot = lambda m, t: (m.v_obst[t] + m.u_obst[t] * m.dt) * m.dt - 2 * m.dt * self.v_des
         # Equality terms
         pos_eq_dot = lambda m, t: m.mu_x[t] * 0.5 * m.dt ** 2
         vel_eq_dot = lambda m, t: m.mu_v[t] * m.dt
         jerk_eq_dot = lambda m, t: m.mu_jerk[t] * 1 / m.dt
         # Inequality terms
-        vel_lim_dot = lambda m, t: -m.lambda_v_min[t] * m.dt + m.lambda_v_max[t] * m.dt
         acc_lim_dot = lambda m, t: -m.lambda_u_min[t] * m.dt + m.lambda_u_max[t] * m.dt
-        safety_cons_dot = lambda m, t: m.lamda_safety[t] * (0.5 * m.dt ** 2 + self.reaction_time * m.dt)
-
+        cbf_safety = lambda m, t: (m.dt + self.reaction_time + m.alpha / 2 * m.dt ** 2 +
+                                   m.reaction_time * m.alpha * m.dt) * m.lamda_safety[t]
+        cbf_v_max = lambda m, t: m.dt * m.lambda_v_max[t] * (1 + m.alpha * m.dt)
+        cbf_v_min = lambda m, t: m.dt * m.lambda_v_min[t] * (1 + m.alpha * m.dt)
+        clf_v_des = lambda m, t: m.dt * m.lambda_v_des[t] * (2 * (m.v_obst[t - 1] + m.u_obst[t] * m.dt - self.v_des)
+                                                             - 2 * m.u_obst[t] * m.dt + +2 * (
+                                                                         m.v_obst[t - 1] + m.u_obst[t] * m.dt
+                                                                         - self.v_des) * m.alpha * m.dt) \
+ \
         # Define the Lagrangian gradient constraint (Stationary conditions)
-        lagrangian_dot = lambda m, t: self._beta_u_obst * acc_obj_dot(m, t) + self._beta_v_obst * vel_obj_dot(m, t) + \
+        lagrangian_dot = lambda m, t: acc_obj_dot(m, t) + \
                                       jerk_eq_dot(m, t) + \
                                       pos_eq_dot(m, t) + vel_eq_dot(m, t) + \
-                                      vel_lim_dot(m, t) + acc_lim_dot(m, t) + \
-                                      safety_cons_dot(m, t) == 0
+                                      acc_lim_dot(m, t) + cbf_safety(m, t) + cbf_v_max(m, t) + cbf_v_min(m, t) + \
+                                      clf_v_des(m, t) == 0 if t > 0 else pe.Constraint.Skip
 
         model.kkt_stationary = pe.Constraint(model.t, rule=lagrangian_dot)
         # Add complementary slackness conditions
         # Safety Constraint
-        kkt_safety = lambda m, t: m.lamda_safety[t] * safety_func(m, t) == 0 \
-            if t < self.terminal_time else pe.Constraint.Skip
+        kkt_safety = lambda m, t: m.lamda_safety[t] * cbf_safety(m, t) == 0
         model.kkt_safety = pe.Constraint(model.t, rule=kkt_safety)
         # Velocity Bounds
-        kkt_v_min = lambda m, k: m.lambda_v_min[k] * (-vel_obst(m, k) + self.v_bounds[0]) == 0 \
-            if k < self.terminal_time else pe.Constraint.Skip
+        kkt_v_min = lambda m, k: m.lambda_v_min[k] * cbf_v_min(m, k) == 0
         model.kkt_v_min = pe.Constraint(model.t, rule=kkt_v_min)
 
-        kkt_v_max = lambda m, k: m.lambda_v_max[k] * (vel_obst(m, k) - self.v_bounds[1]) == 0 \
-            if k < self.terminal_time else pe.Constraint.Skip
+        kkt_v_max = lambda m, k: m.lambda_v_max[k] * cbf_v_max(m, k) == 0
         model.kkt_v_max = pe.Constraint(model.t, rule=kkt_v_max)
 
         # Actuation Bounds
@@ -283,6 +303,10 @@ class CBFGame(LongitudinalManeuver):
 
         kkt_u_max = lambda m, k: m.lambda_u_max[k] * (m.u_obst[k] - self.u_bounds[1]) == 0
         model.kkt_u_max = pe.Constraint(model.t, rule=kkt_u_max)
+
+        # Velocity Desired
+        kkt_v_des = lambda m, k: m.lambda_v_des[k] * clf_v_des(m, k) == 0
+        model.kkt_v_des = pe.Constraint(model.t, rule=kkt_v_des)
 
     def _extract_results(self) -> Dict[str, jnp.ndarray]:
         """Extract the solution from the solver."""
@@ -369,4 +393,3 @@ class CBFGame(LongitudinalManeuver):
             fig.show()
 
         return fig, [ax1, ax2, ax3]
-
