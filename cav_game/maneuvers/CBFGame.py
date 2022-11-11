@@ -216,18 +216,18 @@ class CBFGame(LongitudinalManeuver):
         # Define CBF constraint
         def cbf_safety(m, t):
             return m.v[t] - m.v_obst[t] - float(self.reaction_time) * m.u_obst[t] + \
-                   m.alpha * (m.x[t] - self.reaction_time * m.v_obst[t] - self.min_safe_distance) >= 0
+                   m.gamma * (m.x[t] - self.reaction_time * m.v_obst[t] - self.min_safe_distance) >= 0
 
         def cbf_v_max(m, t):
-            return -m.u_obst[t] + m.alpha * (self.v_bounds[1] - m.v_obst[t]) >= 0
+            return -m.u_obst[t] + m.gamma * (self.v_bounds[1] - m.v_obst[t]) >= 0
 
         def cbf_v_min(m, t):
-            return m.u_obst[t] + m.alpha * (m.v_obst[t] - self.v_bounds[0]) >= 0
+            return m.u_obst[t] + m.gamma * (m.v_obst[t] - self.v_bounds[0]) >= 0
 
-        model.cbf_constraints = pe.ConstraintList()
-        model.cbf_constraints.add(model.t, rule=cbf_safety)
-        model.cbf_constraints.add(model.t, rule=cbf_v_max)
-        model.cbf_constraints.add(model.t, rule=cbf_v_min)
+
+        model.cbf_safety=pe.Constraint(model.t, rule=cbf_safety)
+        model.cbf_v_max=pe.Constraint(model.t, rule=cbf_v_max)
+        model.cbf_v_min=pe.Constraint(model.t, rule=cbf_v_min)
 
         # Define Lyapunov constraint
         def clf_v_des(m, t):
@@ -254,9 +254,9 @@ class CBFGame(LongitudinalManeuver):
         # Constraints for the Lagrangian
         # Inequality constraints
         cbf_safety = lambda m, t: -(m.v[t] - m.v_obst[t] - self.reaction_time*m.u_obst[t] +
-                                    m.alpha*(m.x[t] - self.reaction_time*m.v_obst[t] - self.min_safe_distance))
-        cbf_v_max = lambda m, t: m.u_obst[t] - m.alpha*(self.v_bounds[1] - m.v_obst[t])
-        cbf_v_min = lambda m, t: -m.u_obst[t] - m.alpha*(m.v_obst[t] - self.v_bounds[0])
+                                    m.gamma*(m.x[t] - self.reaction_time*m.v_obst[t] - self.min_safe_distance))
+        cbf_v_max = lambda m, t: m.u_obst[t] - m.gamma*(self.v_bounds[1] - m.v_obst[t])
+        cbf_v_min = lambda m, t: -m.u_obst[t] - m.gamma*(m.v_obst[t] - self.v_bounds[0])
         clf_v_des = lambda m, t: 2*(m.v_obst[t] - self.v_des)*m.u_obst[t] + \
                                  m.epsilon*(m.v_obst[t] - self.v_des)**2 - m.e[t]
 
@@ -269,14 +269,14 @@ class CBFGame(LongitudinalManeuver):
         jerk_eq_dot = lambda m, t: m.mu_jerk[t] * 1 / m.dt
         # Inequality terms
         acc_lim_dot = lambda m, t: -m.lambda_u_min[t] * m.dt + m.lambda_u_max[t] * m.dt
-        cbf_safety = lambda m, t: (m.dt + self.reaction_time + m.alpha / 2 * m.dt ** 2 +
-                                   m.reaction_time * m.alpha * m.dt) * m.lamda_safety[t]
-        cbf_v_max = lambda m, t: m.dt * m.lambda_v_max[t] * (1 + m.alpha * m.dt)
-        cbf_v_min = lambda m, t: m.dt * m.lambda_v_min[t] * (1 + m.alpha * m.dt)
-        clf_v_des = lambda m, t: m.dt * m.lambda_v_des[t] * (2 * (m.v_obst[t - 1] + m.u_obst[t] * m.dt - self.v_des)
+        cbf_safety = lambda m, t: (m.dt + self.reaction_time + m.gamma / 2 * m.dt ** 2 +
+                                   self.reaction_time * m.gamma * m.dt) * m.lamda_safety[t]
+        cbf_v_max = lambda m, t: m.dt * m.lambda_v_max[t] * (1 + m.gamma * m.dt)
+        cbf_v_min = lambda m, t: m.dt * m.lambda_v_min[t] * (1 + m.gamma * m.dt)
+        clf_v_des = lambda m, t: m.dt * m.lambda_v_des[t] * (2 * (m.v_obst[t] + m.u_obst[t] * m.dt - self.v_des)
                                                              - 2 * m.u_obst[t] * m.dt + +2 * (
-                                                                         m.v_obst[t - 1] + m.u_obst[t] * m.dt
-                                                                         - self.v_des) * m.alpha * m.dt) \
+                                                                         m.v_obst[t] + m.u_obst[t] * m.dt
+                                                                         - self.v_des) * m.gamma * m.dt) \
  \
         # Define the Lagrangian gradient constraint (Stationary conditions)
         lagrangian_dot = lambda m, t: acc_obj_dot(m, t) + \

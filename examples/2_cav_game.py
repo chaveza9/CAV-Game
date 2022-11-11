@@ -11,6 +11,7 @@ from cav_game.dynamics.car import DoubleIntegratorDynamics, BicycleDynamics
 from cav_game.maneuvers.selfish import SelfishManeuver
 from cav_game.maneuvers.following import FollowingManeuver
 from cav_game.maneuvers.game import SingleCAVGame, SingleCAVGameBarrier
+from cav_game.maneuvers.CBFGame import CBFGame
 
 
 # Make sure that ipopt is installed
@@ -81,7 +82,14 @@ feasible, trajectory_2 = cav_2.compute_longitudinal_trajectory(obstacle=False, s
 maneuver_params["cav_type"] = "CAV 1"
 dual_game = SingleCAVGame(veh_1, tf, xf,  X0_1, obstacles_1, maneuver_params)
 
+# feasible, trajectory_1 = dual_game.compute_longitudinal_trajectory(obstacle=True, show=True,
+#                                                                    ref_trajectory=trajectory_c, ref_name='CAV C')
+
+"""Compute Trajectory Maneuver"""
+dual_game = CBFGame(veh_1, tf, xf,  X0_1, obstacles_1, maneuver_params)
+
 feasible, trajectory_1 = dual_game.compute_longitudinal_trajectory(obstacle=True, show=True,
                                                                    ref_trajectory=trajectory_c, ref_name='CAV C')
+
 
 
