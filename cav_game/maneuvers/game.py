@@ -73,7 +73,7 @@ class SingleCAVGame(LongitudinalManeuver):
         model.v = pe.Var(model.t, bounds=(self.v_bounds[0], self.v_bounds[1]))  # Velocity [m/s]
         model.u = pe.Var(model.t, bounds=(self.u_bounds[0], self.u_bounds[1]),
                          initialize=3)  # Acceleration [m/s^2]
-        model.jerk = pe.Var(model.t, bounds=(-0.5, 0.5))  # Jerk [m/s^3]
+        # model.jerk = pe.Var(model.t, bounds=(-0.5, 0.5))  # Jerk [m/s^3]
         # Define Derivatives
         model.x_dot = pyo.dae.DerivativeVar(model.x, wrt=model.t)
         model.v_dot = pyo.dae.DerivativeVar(model.v, wrt=model.t)
@@ -89,11 +89,11 @@ class SingleCAVGame(LongitudinalManeuver):
         model.v_obst = pe.Var(model.t, bounds=(self.v_bounds[0], self.v_bounds[1]))  # Velocity [m/s]
         model.u_obst = pe.Var(model.t, bounds=(self.u_bounds[0], self.u_bounds[1]),
                               initialize=3)  # Acceleration [m/s^2]
-        model.jerk_obst = pe.Var(model.t, bounds=(-0.5, 0.5))  # Jerk [m/s^3]
+        # model.jerk_obst = pe.Var(model.t, bounds=(-0.5, 0.5))  # Jerk [m/s^3]
         # Define Derivatives
         model.x_obst_dot = pyo.dae.DerivativeVar(model.x_obst, wrt=model.t)
         model.v_obst_dot = pyo.dae.DerivativeVar(model.v_obst, wrt=model.t)
-        model.u_obst_dot = pyo.dae.DerivativeVar(model.u_obst, wrt=model.t)
+        # model.u_obst_dot = pyo.dae.DerivativeVar(model.u_obst, wrt=model.t)
 
         # Define dual variables
         model.lamda_safety = pe.Var(model.t, domain=pe.NonNegativeReals)  # Dual variable for safety constraint
@@ -108,10 +108,10 @@ class SingleCAVGame(LongitudinalManeuver):
                             initialize=0)  # Dual variable for position equality constraint
         model.mu_v = pe.Var(model.t, bounds=(0, None),
                             initialize=0)  # Dual variable for velocity equality constraint
-        model.mu_jerk = pe.Var(model.t, bounds=(0, None),
-                               initialize=0)  # Dual variable for jerk equality constraint
+        # model.mu_jerk = pe.Var(model.t, bounds=(0, None),
+        #                        initialize=0)  # Dual variable for jerk equality constraint
         # model.epsilon = pe.Var(bounds=(0, 2), initialize=0.001)  # Slack variable for barrier function
-        model.epsilon = pe.Param(initialize=0.001, mutable=True)  # Slack variable for barrier function
+        model.epsilon = pe.Param(initialize=0.01, mutable=True)  # Slack variable for barrier function
         self._model = model
 
     def _define_objective(self) -> None:
@@ -138,7 +138,7 @@ class SingleCAVGame(LongitudinalManeuver):
                                                                  m.v_obst[t] - self.v_des) ** 2)
         # Define objective function ego vehicle expression
         model.ego_objective = model.speed_objective + model.acceleration_objective + model.terminal_speed +\
-                              0*model.influence_objective_pos + model.influence_objective_vel
+                              50*model.influence_objective_pos + 6*model.influence_objective_vel
 
         # ----------------- Obstacle Model -----------------
         # Define objective function expressions
@@ -172,10 +172,10 @@ class SingleCAVGame(LongitudinalManeuver):
 
         model.ode_v = pe.Constraint(model.t, rule=ode_v)
 
-        def ode_u(m, k):
-            return m.u_dot[k] == m.jerk[k]
-
-        model.ode_jerk = pe.Constraint(model.t, rule=ode_u)
+        # def ode_u(m, k):
+        #     return m.u_dot[k] == m.jerk[k]
+        #
+        # model.ode_jerk = pe.Constraint(model.t, rule=ode_u)
 
         # ----------------- Obstacle Model -----------------
         # Define differential algebraic equations
@@ -189,10 +189,10 @@ class SingleCAVGame(LongitudinalManeuver):
 
         model.ode_v_obst = pe.Constraint(model.t, rule=ode_v_obst)
 
-        def ode_u_obst(m, t):
-            return m.u_obst_dot[t] == m.jerk_obst[t]
+        # def ode_u_obst(m, t):
+        #     return m.u_obst_dot[t] == m.jerk_obst[t]
 
-        model.ode_u_obst = pe.Constraint(model.t, rule=ode_u_obst)
+        # model.ode_u_obst = pe.Constraint(model.t, rule=ode_u_obst)
 
     def _define_constraints(self) -> None:
         """Create model constraints """
@@ -207,7 +207,7 @@ class SingleCAVGame(LongitudinalManeuver):
         # Define terminal constraints
         model.xf = pe.Constraint(expr=model.x[self.terminal_time] >= self.terminal_position + 15.0)
 
-        model.xf_obst = pe.Constraint(expr=model.x_obst[self.terminal_time] <= self.terminal_position - 15.0)
+        # model.xf_obst = pe.Constraint(expr=model.x_obst[self.terminal_time] <= self.terminal_position - 15.0)
 
 
         # Add Lagrangian constraints
@@ -220,26 +220,34 @@ class SingleCAVGame(LongitudinalManeuver):
         # Define initial conditions
         model.x[0].fix(model.x0)
         model.v[0].fix(model.v0)
-        model.u[0].fix(0)
+        # model.u[0].fix(0)
         # Sub Model
         # Define initial conditions
         model.x_obst[0].fix(model.x0_obst)
         model.v_obst[0].fix(model.v0_obst)
-        model.u_obst[0].fix(0)
+        # model.u_obst[0].fix(0)
 
     def _define_lagrangian(self) -> None:
         model = self._model
         # Constraints for the Lagrangian
         # Equality constraints
+        # pos_ego = lambda m, t: m.x[t] + m.v[t] * m.dt + 0.5 * m.u[t] * m.dt ** 2 \
+        #     if t < self.terminal_time else pe.Constraint.Skip
+        # pos_obst = lambda m, t: m.x_obst[t] + m.v_obst[t] * m.dt + 0.5 * m.u_obst[t] * m.dt ** 2 \
+        #     if t < self.terminal_time else pe.Constraint.Skip
+        # vel_obst = lambda m, t: m.v_obst[t] + m.u_obst[t] * m.dt if t < self.terminal_time else pe.Constraint.Skip
+        # # Inequality constraints
+        # safety_func = lambda m, t: float(self.reaction_time*1.5) * vel_obst(m, t) + \
+        #                            float(self.min_safe_distance) + pos_obst(m, t) - pos_ego(m, t) \
+        #     if t < self.terminal_time else pe.Constraint.Skip
         pos_ego = lambda m, t: m.x[t] + m.v[t] * m.dt + 0.5 * m.u[t] * m.dt ** 2 \
             if t < self.terminal_time else pe.Constraint.Skip
         pos_obst = lambda m, t: m.x_obst[t] + m.v_obst[t] * m.dt + 0.5 * m.u_obst[t] * m.dt ** 2 \
             if t < self.terminal_time else pe.Constraint.Skip
         vel_obst = lambda m, t: m.v_obst[t] + m.u_obst[t] * m.dt if t < self.terminal_time else pe.Constraint.Skip
         # Inequality constraints
-        safety_func = lambda m, t: float(self.reaction_time*1.5) * vel_obst(m, t) + \
-                                   float(self.min_safe_distance) + pos_obst(m, t) - pos_ego(m, t) \
-            if t < self.terminal_time else pe.Constraint.Skip
+        safety_func = lambda m, t: float(self.reaction_time * 1.5) * m.v_obst[t] + \
+                                   float(self.min_safe_distance) + m.x_obst[t] - m.x[t] \
 
         # KKT Conditions
         # Objective terms
@@ -248,7 +256,7 @@ class SingleCAVGame(LongitudinalManeuver):
         # Equality terms
         pos_eq_dot = lambda m, t: m.mu_x[t] * 0.5 * m.dt ** 2
         vel_eq_dot = lambda m, t: m.mu_v[t] * m.dt
-        jerk_eq_dot = lambda m, t: m.mu_jerk[t] * 1 / m.dt
+        # jerk_eq_dot = lambda m, t: m.mu_jerk[t] * 1 / m.dt
         # Inequality terms
         vel_lim_dot = lambda m, t: -m.lambda_v_min[t] * m.dt + m.lambda_v_max[t] * m.dt
         acc_lim_dot = lambda m, t: -m.lambda_u_min[t] * m.dt + m.lambda_u_max[t] * m.dt
@@ -256,7 +264,6 @@ class SingleCAVGame(LongitudinalManeuver):
 
         # Define the Lagrangian gradient constraint (Stationary conditions)
         lagrangian_dot = lambda m, t: self._beta_u_obst * acc_obj_dot(m, t) + self._beta_v_obst * vel_obj_dot(m, t) + \
-                                      jerk_eq_dot(m, t) + \
                                       pos_eq_dot(m, t) + vel_eq_dot(m, t) + \
                                       vel_lim_dot(m, t) + acc_lim_dot(m, t) + \
                                       safety_cons_dot(m, t) == 0
@@ -264,23 +271,20 @@ class SingleCAVGame(LongitudinalManeuver):
         model.kkt_stationary = pe.Constraint(model.t, rule=lagrangian_dot)
         # Add complementary slackness conditions
         # Safety Constraint
-        kkt_safety = lambda m, t: m.lamda_safety[t] * safety_func(m, t) == 0 \
-            if t < self.terminal_time else pe.Constraint.Skip
+        kkt_safety = lambda m, t: m.lamda_safety[t] * safety_func(m, t) >= -m.epsilon
         model.kkt_safety = pe.Constraint(model.t, rule=kkt_safety)
         # Velocity Bounds
-        kkt_v_min = lambda m, k: m.lambda_v_min[k] * (-vel_obst(m, k) + self.v_bounds[0]) == 0 \
-            if k < self.terminal_time else pe.Constraint.Skip
+        kkt_v_min = lambda m, t: m.lambda_v_min[t] * (-m.v_obst[t] + self.v_bounds[0]) >= -m.epsilon
         model.kkt_v_min = pe.Constraint(model.t, rule=kkt_v_min)
 
-        kkt_v_max = lambda m, k: m.lambda_v_max[k] * (vel_obst(m, k) - self.v_bounds[1]) == 0 \
-            if k < self.terminal_time else pe.Constraint.Skip
+        kkt_v_max = lambda m, t: m.lambda_v_max[t] * (m.v_obst[t] - self.v_bounds[1]) >= -m.epsilon
         model.kkt_v_max = pe.Constraint(model.t, rule=kkt_v_max)
 
         # Actuation Bounds
-        kkt_u_min = lambda m, k: m.lambda_u_min[k] * (-m.u_obst[k] + self.u_bounds[0]) == 0
+        kkt_u_min = lambda m, t: m.lambda_u_min[t] * (-m.u_obst[t] + self.u_bounds[0]) >= -m.epsilon
         model.kkt_u_min = pe.Constraint(model.t, rule=kkt_u_min)
 
-        kkt_u_max = lambda m, k: m.lambda_u_max[k] * (m.u_obst[k] - self.u_bounds[1]) == 0
+        kkt_u_max = lambda m, t: m.lambda_u_max[t] * (m.u_obst[t] - self.u_bounds[1]) >= -m.epsilon
         model.kkt_u_max = pe.Constraint(model.t, rule=kkt_u_max)
 
     def _extract_results(self) -> Dict[str, jnp.ndarray]:
@@ -386,7 +390,7 @@ class SingleCAVGameBarrier(SingleCAVGame):
         model.slack_u_min = pe.Var(model.t, bounds=(0, None), initialize=0.1)
         model.slack_u_max = pe.Var(model.t, bounds=(0, None), initialize=0.1)
         model.slack_safety = pe.Var(model.t, bounds=(0, None), initialize=0.1)
-        model.epsilon = pe.Param(initialize=0.01, mutable=True)
+        # model.epsilon = pe.Param(initialize=0.01, mutable=True)
 
     def _define_constraints(self) -> None:
         """Create model constraints """
@@ -435,7 +439,7 @@ class SingleCAVGameBarrier(SingleCAVGame):
         # Equality terms
         pos_eq_dot = lambda m, t: m.mu_x[t] * 0.5 * m.dt ** 2
         vel_eq_dot = lambda m, t: m.mu_v[t] * m.dt
-        jerk_eq_dot = lambda m, t: m.mu_jerk[t] * 1 / m.dt
+        # jerk_eq_dot = lambda m, t: m.mu_jerk[t] * 1 / m.dt
         # Inequality terms
         vel_lim_dot = lambda m, t: -m.lambda_v_min[t] * m.dt + m.lambda_v_max[t] * m.dt
         acc_lim_dot = lambda m, t: -m.lambda_u_min[t] * m.dt + m.lambda_u_max[t] * m.dt
@@ -443,7 +447,6 @@ class SingleCAVGameBarrier(SingleCAVGame):
 
         # Define the Lagrangian gradient constraint (Stationarity conditions)
         lagrangian_dot = lambda m, t: self._beta_u_obst * acc_obj_dot(m, t) + self._beta_v_obst * vel_obj_dot(m, t) + \
-                                      jerk_eq_dot(m, t) + \
                                       pos_eq_dot(m, t) + vel_eq_dot(m, t) + \
                                       vel_lim_dot(m, t) + acc_lim_dot(m, t) + \
                                       safety_cons_dot(m, t) == 0
